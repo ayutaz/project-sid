@@ -174,7 +174,7 @@ class InfluencerModel:
             Influence score in [0.0, 1.0] range. Returns 0.0 if the agent
             is not in the graph.
         """
-        if agent_id not in social_graph._graph:
+        if not social_graph.has_agent(agent_id):
             logger.debug("influence_agent_not_found", agent_id=agent_id)
             return 0.0
 
@@ -237,7 +237,7 @@ class InfluencerModel:
             Mapping of affected agent IDs to received emotion intensity (0-1).
             Does not include the source agent.
         """
-        if source_id not in social_graph._graph:
+        if not social_graph.has_agent(source_id):
             logger.debug("propagate_source_not_found", source_id=source_id)
             return {}
 
@@ -257,10 +257,10 @@ class InfluencerModel:
                 continue
 
             # Get outgoing edges from current agent
-            if current_id not in social_graph._graph:
+            if not social_graph.has_agent(current_id):
                 continue
 
-            for _, target_id in social_graph._graph.out_edges(current_id):
+            for target_id in social_graph.get_outgoing_neighbors(current_id):
                 if target_id in visited:
                     continue
 
@@ -333,7 +333,7 @@ class InfluencerModel:
         base_preference = preferences.get(agent_id, 0.0)
         base_preference = max(-1.0, min(1.0, base_preference))
 
-        if agent_id not in social_graph._graph:
+        if not social_graph.has_agent(agent_id):
             return VoteInfluence(
                 agent_id=agent_id,
                 proposal_id=proposal,
@@ -357,11 +357,11 @@ class InfluencerModel:
             if current_hop >= self._config.max_hops:
                 continue
 
-            if current_id not in social_graph._graph:
+            if not social_graph.has_agent(current_id):
                 continue
 
             # Check incoming edges (agents that influence the target)
-            for neighbor_id, _ in social_graph._graph.in_edges(current_id):
+            for neighbor_id in social_graph.get_incoming_neighbors(current_id):
                 if neighbor_id in visited:
                     continue
                 if neighbor_id == agent_id:
@@ -437,21 +437,21 @@ class InfluencerModel:
         Returns:
             Direct influence score in [0.0, 1.0] range.
         """
-        if agent_id not in social_graph._graph:
+        if not social_graph.has_agent(agent_id):
             return 0.0
 
-        in_edges = list(social_graph._graph.in_edges(agent_id))
-        if not in_edges:
+        in_neighbors = social_graph.get_incoming_neighbors(agent_id)
+        if not in_neighbors:
             return 0.0
 
         total_weight = 0.0
-        for source, _ in in_edges:
+        for source in in_neighbors:
             relation = social_graph.get_relationship(source, agent_id)
             if relation is not None:
                 affinity_normalized = (relation.affinity + 1.0) / 2.0
                 total_weight += affinity_normalized * relation.trust
 
-        return min(1.0, total_weight / len(in_edges))
+        return min(1.0, total_weight / len(in_neighbors))
 
     def _get_susceptibility(self, agent_id: str) -> float:
         """Get an agent's emotional susceptibility based on neuroticism.

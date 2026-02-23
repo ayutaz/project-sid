@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from piano.core.agent import Agent
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class WorkerStatus(StrEnum):

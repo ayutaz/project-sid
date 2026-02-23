@@ -27,6 +27,7 @@ resources:
   - configmap.yaml
   # Data layer
   - redis-cluster.yaml
+  - qdrant.yaml
   # Application layer
   - agent-worker.yaml
   - llm-gateway.yaml

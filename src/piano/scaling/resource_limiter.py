@@ -126,10 +126,11 @@ class BackpressurePolicy:
 class _AgentState:
     """Internal per-agent resource tracking state."""
 
-    __slots__ = ("llm_in_use", "llm_semaphore", "memory_mb", "throttled")
+    __slots__ = ("llm_available", "llm_in_use", "llm_semaphore", "memory_mb", "throttled")
 
     def __init__(self, max_concurrent_llm: int) -> None:
         self.llm_semaphore = asyncio.Semaphore(max_concurrent_llm)
+        self.llm_available: int = max_concurrent_llm
         self.llm_in_use: int = 0
         self.memory_mb: float = 0.0
         self.throttled: bool = False
@@ -164,6 +165,7 @@ class ResourceLimiter:
 
         self._agents: dict[str, _AgentState] = {}
         self._worker_semaphore = asyncio.Semaphore(max_concurrent_llm_per_worker)
+        self._worker_llm_available: int = max_concurrent_llm_per_worker
         self._worker_llm_in_use: int = 0
         self._lock = asyncio.Lock()
 
@@ -214,7 +216,7 @@ class ResourceLimiter:
                 return False
 
             # Try agent-level semaphore (non-blocking)
-            if not state.llm_semaphore._value:
+            if state.llm_available <= 0:
                 logger.debug(
                     "resource_limiter.agent_limit_reached",
                     agent_id=agent_id,
@@ -223,7 +225,7 @@ class ResourceLimiter:
                 return False
 
             # Try worker-level semaphore (non-blocking)
-            if not self._worker_semaphore._value:
+            if self._worker_llm_available <= 0:
                 logger.debug(
                     "resource_limiter.worker_limit_reached",
                     worker_llm_in_use=self._worker_llm_in_use,
@@ -232,7 +234,9 @@ class ResourceLimiter:
 
             # Acquire both semaphores
             await state.llm_semaphore.acquire()
+            state.llm_available -= 1
             await self._worker_semaphore.acquire()
+            self._worker_llm_available -= 1
             state.llm_in_use += 1
             self._worker_llm_in_use += 1
 
@@ -283,7 +287,9 @@ class ResourceLimiter:
             state.llm_in_use -= 1
             self._worker_llm_in_use = max(0, self._worker_llm_in_use - 1)
             state.llm_semaphore.release()
+            state.llm_available += 1
             self._worker_semaphore.release()
+            self._worker_llm_available += 1
 
             # Re-evaluate throttle status
             usage = self._build_usage(agent_id, state)

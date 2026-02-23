@@ -358,6 +358,51 @@ class SocialGraph:
         )
         return graph
 
+    def has_agent(self, agent_id: str) -> bool:
+        """Check if an agent exists in the graph.
+
+        Args:
+            agent_id: Agent ID to check.
+
+        Returns:
+            True if the agent is a node in the graph.
+        """
+        return agent_id in self._graph
+
+    def get_all_agents(self) -> list[str]:
+        """Return all agent IDs in the graph.
+
+        Returns:
+            List of agent IDs.
+        """
+        return list(self._graph.nodes())
+
+    def get_outgoing_neighbors(self, agent_id: str) -> list[str]:
+        """Return agent IDs reachable via outgoing edges.
+
+        Args:
+            agent_id: Source agent ID.
+
+        Returns:
+            List of target agent IDs.
+        """
+        if agent_id not in self._graph:
+            return []
+        return [target for _, target in self._graph.out_edges(agent_id)]
+
+    def get_incoming_neighbors(self, agent_id: str) -> list[str]:
+        """Return agent IDs that have edges pointing to this agent.
+
+        Args:
+            agent_id: Target agent ID.
+
+        Returns:
+            List of source agent IDs.
+        """
+        if agent_id not in self._graph:
+            return []
+        return [source for source, _ in self._graph.in_edges(agent_id)]
+
     @property
     def agent_count(self) -> int:
         """Number of agents in the graph."""

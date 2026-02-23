@@ -107,6 +107,57 @@ class LogSettings(BaseModel):
     format: str = "json"
 
 
+class ObservabilitySettings(BaseModel):
+    """Observability stack settings (metrics, tracing, logging)."""
+
+    metrics_enabled: bool = True
+    tracing_enabled: bool = True
+    log_format: str = "json"
+    prometheus_port: int = 9090
+
+
+class ScalingSettings(BaseModel):
+    """Scaling and worker management settings."""
+
+    agents_per_worker: int = 250
+    max_workers: int = 8
+    num_shards: int = 4
+    sharding_strategy: str = "consistent_hash"
+    health_check_interval: float = 30.0
+
+
+class VelocitySettings(BaseModel):
+    """Velocity proxy settings."""
+
+    proxy_host: str = "localhost"
+    proxy_port: int = 25577
+    max_players_per_server: int = 200
+    strategy: str = "least_connections"
+
+
+class ResourceLimiterSettings(BaseModel):
+    """Per-agent and per-worker resource limiter settings."""
+
+    max_concurrent_llm_per_agent: int = 3
+    max_concurrent_llm_per_worker: int = 50
+    max_memory_per_agent_mb: int = 64
+
+
+class PromptCacheSettings(BaseModel):
+    """Prompt cache settings."""
+
+    max_entries: int = 1000
+    ttl_seconds: float = 3600.0
+    default_threshold: float = 0.95
+    enable_semantic: bool = True
+
+
+class MultiProviderSettings(BaseModel):
+    """Multi-provider LLM router settings."""
+
+    routing_strategy: str = "weighted_round_robin"
+
+
 class PianoSettings(BaseSettings):
     """Root settings for the PIANO system.
 
@@ -139,6 +190,12 @@ class PianoSettings(BaseSettings):
     local_llm: LocalLLMSettings = Field(default_factory=LocalLLMSettings)
     checkpoint: CheckpointSettings = Field(default_factory=CheckpointSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    scaling: ScalingSettings = Field(default_factory=ScalingSettings)
+    velocity: VelocitySettings = Field(default_factory=VelocitySettings)
+    resource_limiter: ResourceLimiterSettings = Field(default_factory=ResourceLimiterSettings)
+    prompt_cache: PromptCacheSettings = Field(default_factory=PromptCacheSettings)
+    multi_provider: MultiProviderSettings = Field(default_factory=MultiProviderSettings)
 
 
 def get_settings(**overrides: object) -> PianoSettings:

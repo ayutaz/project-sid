@@ -28,10 +28,17 @@ spec:
       nodeSelector:
         pool: general
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
         - name: llm-gateway
           image: project-sid/llm-gateway:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
           resources:
             requests:
               cpu: "1"

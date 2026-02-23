@@ -18,6 +18,7 @@ __all__ = [
     "RoutingStrategy",
 ]
 
+import hashlib
 import time
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -193,7 +194,7 @@ class MultiProviderRouter:
             raise NoProvidersError("No providers registered")
 
         ordered = self._select_order()
-        cache_key = request.prompt[:128]
+        cache_key = hashlib.sha256(request.prompt.encode()).hexdigest()
         errors: list[tuple[str, Exception]] = []
 
         for name in ordered:

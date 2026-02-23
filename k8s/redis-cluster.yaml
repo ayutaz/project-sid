@@ -97,9 +97,16 @@ spec:
       # Schedule on general pool nodes
       nodeSelector:
         pool: general
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
       containers:
         - name: redis
           image: redis:7-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
           command:
             - redis-server
             - /etc/redis/redis.conf
@@ -147,3 +154,69 @@ spec:
         resources:
           requests:
             storage: 10Gi
+---
+# Job to initialize Redis Cluster after all StatefulSet pods are ready.
+# Creates a 3-master + 3-replica cluster from the 6 StatefulSet nodes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: project-sid
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-cluster-init
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        pool: general
+      initContainers:
+        # Wait until all 6 Redis pods are ready before attempting cluster creation
+        - name: wait-for-redis
+          image: redis:7-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for all Redis cluster nodes to be ready..."
+              for i in 0 1 2 3 4 5; do
+                HOST="redis-cluster-${i}.redis-cluster-headless.project-sid.svc.cluster.local"
+                until redis-cli -h "$HOST" ping | grep -q PONG; do
+                  echo "Waiting for ${HOST}..."
+                  sleep 5
+                done
+                echo "${HOST} is ready."
+              done
+              echo "All Redis nodes are ready."
+      containers:
+        - name: cluster-create
+          image: redis:7-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Check if cluster is already initialized
+              CLUSTER_INFO=$(redis-cli -h redis-cluster-0.redis-cluster-headless.project-sid.svc.cluster.local cluster info 2>/dev/null)
+              if echo "$CLUSTER_INFO" | grep -q "cluster_state:ok"; then
+                echo "Redis cluster is already initialized. Skipping."
+                exit 0
+              fi
+
+              echo "Creating Redis cluster..."
+              redis-cli --cluster create \
+                redis-cluster-0.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                redis-cluster-1.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                redis-cluster-2.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                redis-cluster-3.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                redis-cluster-4.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                redis-cluster-5.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
+                --cluster-replicas 1 --cluster-yes
+
+              echo "Redis cluster initialization complete."
+              redis-cli -h redis-cluster-0.redis-cluster-headless.project-sid.svc.cluster.local cluster info

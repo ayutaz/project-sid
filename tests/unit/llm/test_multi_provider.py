@@ -341,8 +341,11 @@ class TestFallbackCaching:
         router.add_provider("p1", _make_provider(content="resp-a"))
 
         await router.route(_make_request("prompt-a"))
-        # Cache key is based on prompt prefix
-        assert any("prompt-a" in k for k in router._last_response_cache)
+        # Cache key is a SHA-256 hash of the prompt
+        import hashlib
+
+        expected_key = hashlib.sha256(b"prompt-a").hexdigest()
+        assert expected_key in router._last_response_cache
 
 
 # ---------------------------------------------------------------------------

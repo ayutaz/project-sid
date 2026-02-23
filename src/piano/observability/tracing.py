@@ -30,8 +30,10 @@ __all__ = [
     "Tracer",
 ]
 
+import asyncio
 import contextvars
 import functools
+import inspect
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -437,7 +439,4 @@ class Tracer:
 
 def _is_coroutine_function(fn: Any) -> bool:
     """Return ``True`` if *fn* is an async function (works with wrapped fns)."""
-    import asyncio
-    import inspect
-
     return asyncio.iscoroutinefunction(fn) or inspect.iscoroutinefunction(fn)

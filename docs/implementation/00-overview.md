@@ -13,7 +13,7 @@
 1. **並行性（Concurrency）**: 高速反射モジュール（非LLM）と低速熟慮モジュール（LLM）が異なる速度で並列実行
 2. **一貫性（Coherence）**: 認知コントローラ（CC）がGWT情報ボトルネック+ブロードキャストで全モジュール間の一貫性を制御
 
-**現在の状態**: **Phase 0 MVP実装完了**。323テスト全通過、ruff lint clean。全コアモジュール（SAS, Scheduler, CC, Memory, LLM, Bridge, Skills, ActionAwareness, Config）が動作可能。次のステップはPhase 1（全モジュール統合、10体動作）。
+**現在の状態**: **Phase 2 実装完了**（検証待ち）。1,927テスト全通過、ruff lint clean。Phase 0コアモジュール + Phase 1全モジュール統合（10体動作） + Phase 2スケーリング基盤（50体対応）が実装済み。次のステップはPhase 2 E2E検証およびPhase 3準備。
 
 ---
 
@@ -142,9 +142,9 @@
 2. **CC情報圧縮アルゴリズム**: **テンプレートベース**を採用。6セクション構造の固定テンプレートで圧縮、情報保持率>0.8を達成
 3. **SASスキーマのフリーズポイント**: Phase 1開始前に最終判断予定
 
-### 未解決
+### Phase 1で解決済み
 
-1. **SASスキーマの最終フリーズ**: Phase 1で全モジュール統合時に確定予定
+1. **SASスキーマの最終フリーズ**: Phase 1でsas_phase1.py Mixin実装により確定
 
 ---
 
@@ -176,11 +176,29 @@
   - Config: PianoSettings（pydantic-settings、環境変数対応）
   - CI: GitHub Actions（Python 3.12/3.13、pytest + ruff + mypy）
   - Docker: Redis + PostgreSQL + Pufferfish
-- **次のステップ**: Phase 1（全モジュール統合、10体動作）
-  1. 統合テスト強化・E2E実行（MC接続）
-  2. 品質ゲート検証（CC制御下で言行一致改善率30%以上）
-  3. 目標生成、計画、社会認識、発話、自己省察モジュールの実装
-  4. LTM（Qdrant）統合
+- **完了**: Phase 1 実装（1,125テスト全通過）
+  - 認知モジュール: GoalGeneration, Planning, SelfReflection, Talking
+  - 社会認知: SocialAwareness, Personality(BigFive), SocialGraph, EmotionTracking
+  - 記憶: LTM Store(Qdrant), LTM Search(忘却曲線), Memory Consolidation(STM→LTM)
+  - LLM基盤: ModelTiering(3層), LLMGateway(priority queue+circuit breaker), LocalLLM(Ollama/vLLM)
+  - 行動認識: ActionAwareness NN(~100Kパラメータ), NNTrainer(SGD+momentum)
+  - 評価: ItemCollectionBenchmark, SocialCognitionMetrics
+  - インフラ: Checkpoint/Restore, SAS Phase1 Mixin, Orchestrator(10エージェント管理)
+  - スキル拡張: Social Skills(trade/gift/vote), Advanced Skills(craft chain/farming/combat)
+  - ブリッジ拡張: Protocol extensions(batch commands, validation, serialization)
+- **完了**: Phase 2 実装（1,927テスト全通過、検証待ち）
+  - スケーリング: WorkerPool, Supervisor, Sharding, ResourceLimiter
+  - 可観測性: 構造化ログ, Prometheusメトリクス, トレーシング
+  - 社会認知拡張: CollectiveIntelligence, InfluencerAnalysis
+  - 評価拡張: GovernanceMetrics, MemeTracker, PerformanceBenchmark, RoleInference
+  - LLM拡張: MultiProvider(フェイルオーバー), PromptCache(セマンティックキャッシュ)
+  - ブリッジ拡張: VelocityProxy(マルチサーバー)
+  - インフラ: DistributedCheckpoint, Kubernetes manifests, Grafana/Prometheus監視基盤
+  - CI: Phase 2パイプライン
+- **次のステップ**:
+  1. Phase 2 E2E検証（50体MC接続、スケーリング動作確認）
+  2. スケーリング負荷テスト（ワーカープール、シャーディング性能測定）
+  3. Phase 3準備（500体規模、文明シミュレーション設計）
 
 ---
 

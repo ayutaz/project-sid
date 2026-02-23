@@ -23,7 +23,7 @@ from enum import StrEnum
 import structlog
 from pydantic import BaseModel, Field
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

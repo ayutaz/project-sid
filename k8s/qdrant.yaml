@@ -1,0 +1,121 @@
+# Project Sid - Qdrant
+# StatefulSet for Qdrant vector database used as Long-Term Memory (LTM) store.
+# Provides HTTP (6333) and gRPC (6334) endpoints for vector similarity search.
+---
+# ClusterIP Service for client access
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: project-sid
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 6333
+      targetPort: http
+    - name: grpc
+      port: 6334
+      targetPort: grpc
+  selector:
+    app.kubernetes.io/name: qdrant
+---
+# Headless Service for StatefulSet DNS resolution
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-headless
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: project-sid
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 6333
+      targetPort: http
+    - name: grpc
+      port: 6334
+      targetPort: grpc
+  selector:
+    app.kubernetes.io/name: qdrant
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: project-sid
+spec:
+  serviceName: qdrant-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: project-sid
+    spec:
+      nodeSelector:
+        pool: general
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:latest
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 6333
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: qdrant
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
