@@ -33,6 +33,8 @@ class LLMSettings(BaseModel):
             "slow": "gpt-4o",
         }
     )
+    cost_limit_usd: float = 100.0
+    calls_per_minute_limit: int = 100
 
 
 class BridgeSettings(BaseModel):

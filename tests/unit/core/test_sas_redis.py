@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import fakeredis.aioredis
 import pytest
+import redis as redis_lib
 
 from piano.core.sas_redis import _ACTION_HISTORY_LIMIT, _STM_LIMIT, RedisSAS
 from piano.core.types import (
@@ -485,3 +487,158 @@ class TestEdgeCases:
         assert result.expected_result == entry.expected_result
         assert result.actual_result == entry.actual_result
         assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Error Handling
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandling:
+    async def test_get_percepts_returns_default_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_percepts should return default PerceptData on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "get", side_effect=redis_lib.RedisError("Connection lost")):
+            percepts = await sas.get_percepts()
+            assert percepts == PerceptData()
+            assert not sas.is_healthy
+
+    async def test_update_goals_logs_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """update_goals should log error but not raise on Redis failure."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "set", side_effect=redis_lib.RedisError("Connection lost")):
+            # Should not raise
+            await sas.update_goals(GoalData(current_goal="test"))
+            assert not sas.is_healthy
+
+    async def test_snapshot_returns_defaults_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """snapshot should return defaults on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "get", side_effect=redis_lib.RedisError("Connection lost")):
+            snap = await sas.snapshot()
+            assert snap["agent_id"] == agent_id
+            assert snap["percepts"] == PerceptData().model_dump()
+            assert snap["goals"] == GoalData().model_dump()
+            assert snap["action_history"] == []
+            assert not sas.is_healthy
+
+    async def test_is_healthy_tracks_redis_status(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """is_healthy should track whether Redis operations succeed."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+
+        # Initially healthy
+        assert sas.is_healthy
+
+        # After successful operation
+        await sas.update_percepts(PerceptData(health=10.0))
+        assert sas.is_healthy
+
+        # After failed operation
+        with patch.object(redis, "get", side_effect=redis_lib.RedisError("Connection lost")):
+            await sas.get_percepts()
+            assert not sas.is_healthy
+
+        # Recovers after successful operation
+        await sas.update_percepts(PerceptData(health=15.0))
+        assert sas.is_healthy
+
+    async def test_get_goals_returns_default_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_goals should return default GoalData on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "get", side_effect=redis_lib.RedisError("Connection lost")):
+            goals = await sas.get_goals()
+            assert goals == GoalData()
+            assert not sas.is_healthy
+
+    async def test_get_action_history_returns_empty_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_action_history should return empty list on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "lrange", side_effect=redis_lib.RedisError("Connection lost")):
+            history = await sas.get_action_history()
+            assert history == []
+            assert not sas.is_healthy
+
+    async def test_get_working_memory_returns_empty_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_working_memory should return empty list on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "lrange", side_effect=redis_lib.RedisError("Connection lost")):
+            wm = await sas.get_working_memory()
+            assert wm == []
+            assert not sas.is_healthy
+
+    async def test_get_stm_returns_empty_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_stm should return empty list on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "lrange", side_effect=redis_lib.RedisError("Connection lost")):
+            stm = await sas.get_stm()
+            assert stm == []
+            assert not sas.is_healthy
+
+    async def test_get_last_cc_decision_returns_none_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_last_cc_decision should return None on Redis error."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "get", side_effect=redis_lib.RedisError("Connection lost")):
+            decision = await sas.get_last_cc_decision()
+            assert decision is None
+            assert not sas.is_healthy
+
+    async def test_write_operations_dont_raise_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """All write operations should catch errors and not raise."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+
+        # Test various write operations
+        with patch.object(redis, "set", side_effect=redis_lib.RedisError("Connection lost")):
+            await sas.update_percepts(PerceptData())
+            await sas.update_goals(GoalData())
+            await sas.update_social(SocialData())
+            await sas.update_plans(PlanData())
+            await sas.update_self_reflection(SelfReflectionData())
+            await sas.set_cc_decision({"test": "data"})
+            assert not sas.is_healthy
+
+        with patch.object(redis, "lpush", side_effect=redis_lib.RedisError("Connection lost")):
+            await sas.add_action(ActionHistoryEntry(action="test"))
+            await sas.add_stm(MemoryEntry(content="test"))
+            assert not sas.is_healthy
+
+    async def test_initialize_raises_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """initialize should raise on Redis error (initialization failure is legitimate)."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        with patch.object(redis, "set", side_effect=redis_lib.RedisError("Connection lost")):
+            with pytest.raises(redis_lib.RedisError):
+                await sas.initialize()
+            assert not sas.is_healthy
+
+    async def test_clear_raises_on_redis_error(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """clear should raise on Redis error (clear failure is legitimate)."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+        with patch.object(redis, "scan", side_effect=redis_lib.RedisError("Connection lost")):
+            with pytest.raises(redis_lib.RedisError):
+                await sas.clear()
+            assert not sas.is_healthy

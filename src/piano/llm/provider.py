@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from typing import Protocol, runtime_checkable
 
 import litellm
@@ -18,6 +19,21 @@ import litellm
 from piano.core.types import LLMRequest, LLMResponse, ModuleTier
 
 logger = logging.getLogger(__name__)
+
+
+# --- Custom Exceptions ---
+
+
+class CostLimitExceededError(Exception):
+    """Raised when the cost limit is exceeded."""
+
+    pass
+
+
+class RateLimitExceededError(Exception):
+    """Raised when the rate limit is exceeded."""
+
+    pass
 
 # Tier-based default models
 DEFAULT_MODELS: dict[ModuleTier, str] = {
@@ -54,6 +70,8 @@ class LiteLLMProvider:
         default_models: dict[ModuleTier, str] | None = None,
         max_retries: int = 3,
         timeout_seconds: float = 30.0,
+        cost_limit_usd: float = 100.0,
+        calls_per_minute_limit: int = 100,
     ) -> None:
         """Initialise the provider.
 
@@ -61,10 +79,17 @@ class LiteLLMProvider:
             default_models: Override the default model mapping per tier.
             max_retries: Maximum number of retry attempts on transient errors.
             timeout_seconds: Per-request timeout in seconds.
+            cost_limit_usd: Maximum allowed cost in USD before raising CostLimitExceededError.
+            calls_per_minute_limit: Maximum calls per minute before raising RateLimitExceededError.
         """
         self.default_models = default_models or dict(DEFAULT_MODELS)
         self.max_retries = max_retries
         self.timeout_seconds = timeout_seconds
+        self._cost_limit_usd = cost_limit_usd
+        self._calls_per_minute_limit = calls_per_minute_limit
+        self._total_cost_usd: float = 0.0
+        self._call_count: int = 0
+        self._call_timestamps: deque[float] = deque()
 
     def _resolve_model(self, request: LLMRequest) -> str:
         """Return the model string, falling back to tier default."""
@@ -80,6 +105,56 @@ class LiteLLMProvider:
         messages.append({"role": "user", "content": request.prompt})
         return messages
 
+    def _check_cost_limit(self) -> None:
+        """Check if cost limit has been exceeded.
+
+        Raises:
+            CostLimitExceededError: If total cost exceeds the configured limit.
+        """
+        if self._total_cost_usd >= self._cost_limit_usd:
+            raise CostLimitExceededError(
+                f"Cost limit exceeded: ${self._total_cost_usd:.4f} >= ${self._cost_limit_usd:.4f}"
+            )
+
+    def _check_rate_limit(self) -> None:
+        """Check if rate limit has been exceeded using a sliding window.
+
+        Raises:
+            RateLimitExceededError: If calls per minute exceeds the configured limit.
+        """
+        now = time.monotonic()
+        window_start = now - 60.0  # 60 seconds ago
+
+        # Remove timestamps outside the sliding window
+        while self._call_timestamps and self._call_timestamps[0] < window_start:
+            self._call_timestamps.popleft()
+
+        # Check if we've exceeded the rate limit
+        if len(self._call_timestamps) >= self._calls_per_minute_limit:
+            raise RateLimitExceededError(
+                f"Rate limit exceeded: {len(self._call_timestamps)} calls in the last minute "
+                f"(limit: {self._calls_per_minute_limit})"
+            )
+
+        # Record this call
+        self._call_timestamps.append(now)
+
+    @property
+    def total_cost_usd(self) -> float:
+        """Return the total cost in USD across all calls."""
+        return self._total_cost_usd
+
+    @property
+    def call_count(self) -> int:
+        """Return the total number of successful calls."""
+        return self._call_count
+
+    def reset_cost_tracking(self) -> None:
+        """Reset cost and call count tracking to zero."""
+        self._total_cost_usd = 0.0
+        self._call_count = 0
+        self._call_timestamps.clear()
+
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Send a completion request with retry and backoff.
 
@@ -90,8 +165,14 @@ class LiteLLMProvider:
             An LLMResponse with content, usage, cost, and latency info.
 
         Raises:
+            CostLimitExceededError: If cost limit is exceeded.
+            RateLimitExceededError: If rate limit is exceeded.
             Exception: If all retry attempts are exhausted.
         """
+        # Check limits before making the call
+        self._check_cost_limit()
+        self._check_rate_limit()
+
         model = self._resolve_model(request)
         messages = self._build_messages(request)
 
@@ -126,6 +207,10 @@ class LiteLLMProvider:
                 except Exception:
                     cost = 0.0
 
+                # Update tracking after successful call
+                self._total_cost_usd += cost
+                self._call_count += 1
+
                 return LLMResponse(
                     content=content,
                     model=model,
@@ -146,4 +231,7 @@ class LiteLLMProvider:
                     )
                     await asyncio.sleep(wait)
 
-        raise last_exception  # type: ignore[misc]
+        # This should never happen if max_retries > 0, but guard for type safety
+        if last_exception is not None:
+            raise last_exception
+        raise RuntimeError("LLM call failed with no exception captured")

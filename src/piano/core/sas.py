@@ -9,6 +9,8 @@ Reference: docs/implementation/01-system-architecture.md Section 2
 
 from __future__ import annotations
 
+__all__ = ["SharedAgentState"]
+
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 

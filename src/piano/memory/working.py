@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
@@ -22,11 +23,15 @@ if TYPE_CHECKING:
 
 _MAX_CAPACITY = 10
 
+# Exponential decay rate for recency scoring (per hour).
+# Half-life ≈ 1.4 hours (ln(2) / 0.5 ≈ 1.386).
+DECAY_LAMBDA = 0.5
+
 
 def _recency_score(entry: MemoryEntry, now: datetime) -> float:
-    """Exponential decay based on age.  lambda = 0.5 per hour."""
+    """Exponential decay based on age."""
     age_hours = max((now - entry.timestamp).total_seconds() / 3600.0, 0.0)
-    return math.exp(-0.5 * age_hours)
+    return math.exp(-DECAY_LAMBDA * age_hours)
 
 
 def _eviction_score(entry: MemoryEntry, now: datetime) -> float:
@@ -99,10 +104,16 @@ class WorkingMemory:
         """Return whether memory is at capacity."""
         return len(self._entries) >= self._capacity
 
-    def remove(self, entry_id: str) -> bool:
-        """Remove an entry by its UUID string. Returns True if found."""
+    def remove(self, entry_id: str | UUID) -> bool:
+        """Remove an entry by its UUID string or UUID. Returns True if found."""
+        # Convert to UUID once for efficient comparison
+        try:
+            target_id = entry_id if isinstance(entry_id, UUID) else UUID(entry_id)
+        except ValueError:
+            # Invalid UUID string
+            return False
         for i, e in enumerate(self._entries):
-            if str(e.id) == entry_id:
+            if e.id == target_id:
                 self._entries.pop(i)
                 return True
         return False

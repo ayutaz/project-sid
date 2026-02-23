@@ -406,3 +406,256 @@ class TestBridgeTypes:
         }
         event = BridgeEvent.model_validate(raw)
         assert event.event_type == "death"
+
+
+# ---------------------------------------------------------------------------
+# Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeClientEdgeCases:
+    """Edge case tests for reconnection, errors, and edge conditions."""
+
+    async def test_reconnect_cmd_socket_creates_new_socket(
+        self, connected_client
+    ) -> None:
+        """Reconnecting command socket creates a new socket object."""
+        client, old_cmd_socket, _ = connected_client
+        old_socket_id = id(old_cmd_socket)
+
+        # Manually trigger reconnect
+        await client._reconnect_cmd_socket()
+
+        new_socket_id = id(client._cmd_socket)
+        assert new_socket_id != old_socket_id
+        assert client.status == BridgeStatus.CONNECTED
+        old_cmd_socket.close.assert_called_once()
+
+    async def test_disconnect_when_already_disconnected(self, mock_ctx: MagicMock) -> None:
+        """Disconnecting an already disconnected client is idempotent."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient()
+            await client.disconnect()  # First disconnect (no-op)
+            assert client.status == BridgeStatus.DISCONNECTED
+
+            await client.disconnect()  # Second disconnect (should be safe)
+            assert client.status == BridgeStatus.DISCONNECTED
+
+    async def test_send_command_with_empty_params(self, connected_client) -> None:
+        """Commands with empty params dict are handled correctly."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "test",
+            "success": True,
+            "data": {},
+            "error": None,
+        })
+
+        cmd = BridgeCommand(action="ping", params={})
+        resp = await client.send_command(cmd)
+
+        assert resp["success"] is True
+        payload_str = cmd_mock.send_string.call_args[0][0]
+        payload = json.loads(payload_str)
+        assert payload["params"] == {}
+
+    async def test_event_listener_error_continues_listening(
+        self, connected_client
+    ) -> None:
+        """Error in callback doesn't stop event listener."""
+        client, _, sub_mock = connected_client
+
+        event1 = {
+            "event_type": "chat",
+            "data": {"message": "first"},
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+        event2 = {
+            "event_type": "chat",
+            "data": {"message": "second"},
+            "timestamp": "2026-01-01T00:00:01Z",
+        }
+
+        call_count = 0
+
+        async def recv_two_events() -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return event1
+            elif call_count == 2:
+                return event2
+            # Block forever after two events
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = recv_two_events
+
+        received: list[BridgeEvent] = []
+        error_count = 0
+
+        async def on_event_with_error(event: BridgeEvent) -> None:
+            nonlocal error_count
+            if event.data["message"] == "first":
+                error_count += 1
+                raise ValueError("Callback error")
+            received.append(event)
+
+        await client.start_event_listener(on_event_with_error)
+        await asyncio.sleep(0.2)
+
+        # First event should have raised an error, second should succeed
+        assert error_count == 1
+        assert len(received) == 1
+        assert received[0].data["message"] == "second"
+
+    async def test_event_listener_cancelled_stops_cleanly(
+        self, connected_client
+    ) -> None:
+        """Cancelling event listener task stops it cleanly."""
+        client, _, sub_mock = connected_client
+
+        async def recv_forever() -> dict[str, Any]:
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = recv_forever
+
+        received: list[BridgeEvent] = []
+
+        async def on_event(event: BridgeEvent) -> None:
+            received.append(event)
+
+        await client.start_event_listener(on_event)
+        assert client._event_task is not None
+
+        # Cancel the task
+        client._event_task.cancel()
+        await asyncio.sleep(0.1)
+
+        assert client._event_task.done()
+        assert len(received) == 0
+
+    async def test_convenience_methods_propagate_timeout(
+        self, connected_client
+    ) -> None:
+        """Timeout in convenience methods propagates TimeoutError."""
+        client, cmd_mock, _ = connected_client
+
+        # Make send_command always timeout
+        cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+        # Override _reconnect_cmd_socket to reset the same failing mock
+        async def fake_reconnect() -> None:
+            client._cmd_socket = cmd_mock
+            # Don't set status here - let send_command handle it
+
+        client._reconnect_cmd_socket = fake_reconnect
+
+        # Test move_to
+        with pytest.raises(TimeoutError):
+            await client.move_to(1, 2, 3)
+
+        # Reset status for next test
+        client._status = BridgeStatus.CONNECTED
+
+        # Test mine_block
+        with pytest.raises(TimeoutError):
+            await client.mine_block(5, 60, 5)
+
+        client._status = BridgeStatus.CONNECTED
+
+        # Test craft_item
+        with pytest.raises(TimeoutError):
+            await client.craft_item("planks", 4)
+
+        client._status = BridgeStatus.CONNECTED
+
+        # Test chat
+        with pytest.raises(TimeoutError):
+            await client.chat("hello")
+
+        client._status = BridgeStatus.CONNECTED
+
+        # Test get_position
+        with pytest.raises(TimeoutError):
+            await client.get_position()
+
+        client._status = BridgeStatus.CONNECTED
+
+        # Test get_inventory
+        with pytest.raises(TimeoutError):
+            await client.get_inventory()
+
+    async def test_reconnect_without_context_raises_error(
+        self, connected_client
+    ) -> None:
+        """Reconnecting when context is None raises ConnectionError."""
+        client, _, _ = connected_client
+        client._ctx = None
+
+        with pytest.raises(ConnectionError, match="ZMQ context is not available"):
+            await client._reconnect_cmd_socket()
+
+    async def test_status_transitions_on_timeout(self, connected_client) -> None:
+        """Status correctly transitions CONNECTED->RECONNECTING->DISCONNECTED on timeouts."""
+        client, cmd_mock, _ = connected_client
+
+        cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+        async def fake_reconnect() -> None:
+            client._status = BridgeStatus.CONNECTED
+
+        client._reconnect_cmd_socket = fake_reconnect
+
+        assert client.status == BridgeStatus.CONNECTED
+
+        cmd = BridgeCommand(action="ping", params={})
+        with pytest.raises(TimeoutError):
+            await client.send_command(cmd)
+
+        # After MAX_RETRIES, status should be DISCONNECTED
+        assert client.status == BridgeStatus.DISCONNECTED
+
+    async def test_disconnect_cancels_event_task(self, connected_client) -> None:
+        """Disconnecting cancels the event listener task."""
+        client, _, sub_mock = connected_client
+
+        async def recv_forever() -> dict[str, Any]:
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = recv_forever
+
+        async def on_event(event: BridgeEvent) -> None:
+            pass  # pragma: no cover
+
+        await client.start_event_listener(on_event)
+        assert client._event_task is not None
+        task = client._event_task
+
+        await client.disconnect()
+
+        assert task.done()
+        assert client._event_task is None
+
+    async def test_send_command_with_zero_timeout(self, mock_ctx: MagicMock) -> None:
+        """Client with zero timeout immediately times out."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient(timeout_ms=0)
+            await client.connect()
+
+            cmd_mock = client._cmd_socket
+            cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+            async def fake_reconnect() -> None:
+                client._cmd_socket = cmd_mock
+                client._status = BridgeStatus.CONNECTED
+
+            client._reconnect_cmd_socket = fake_reconnect
+
+            cmd = BridgeCommand(action="ping", params={})
+            with pytest.raises(TimeoutError):
+                await client.send_command(cmd)
+
+            await client.disconnect()

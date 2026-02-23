@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from piano.core.types import LLMRequest, ModuleTier
-from piano.llm.provider import DEFAULT_MODELS, LiteLLMProvider, LLMProvider
+from piano.llm.provider import (
+    DEFAULT_MODELS,
+    CostLimitExceededError,
+    LiteLLMProvider,
+    LLMProvider,
+    RateLimitExceededError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -244,3 +250,161 @@ class TestRetry:
         assert mock_sleep.call_count == 2
         assert mock_sleep.call_args_list[0].args[0] == 1
         assert mock_sleep.call_args_list[1].args[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking and limits
+# ---------------------------------------------------------------------------
+
+class TestCostTracking:
+    @pytest.mark.asyncio
+    async def test_cost_tracking_increments(self) -> None:
+        """Cost should increase after successful calls."""
+        mock_resp = _make_litellm_response("ok")
+        provider = LiteLLMProvider(cost_limit_usd=10.0)
+
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.5),
+        ):
+            mock_ac.return_value = mock_resp
+            await provider.complete(LLMRequest(prompt="hello"))
+            await provider.complete(LLMRequest(prompt="world"))
+
+        assert provider.total_cost_usd == pytest.approx(1.0)
+        assert provider.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cost_limit_exceeded_raises(self) -> None:
+        """Should raise CostLimitExceededError when limit is hit."""
+        mock_resp = _make_litellm_response("ok")
+        provider = LiteLLMProvider(cost_limit_usd=1.0)
+
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.6),
+        ):
+            mock_ac.return_value = mock_resp
+            await provider.complete(LLMRequest(prompt="first"))
+            # Second call should put us over the limit
+            await provider.complete(LLMRequest(prompt="second"))
+
+            # Third call should fail before making API call
+            with pytest.raises(CostLimitExceededError, match="Cost limit exceeded"):
+                await provider.complete(LLMRequest(prompt="third"))
+
+        # Should have only 2 successful calls
+        assert provider.call_count == 2
+        assert provider.total_cost_usd == pytest.approx(1.2)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exceeded_raises(self) -> None:
+        """Should raise RateLimitExceededError when rate limit is exceeded."""
+        mock_resp = _make_litellm_response("ok")
+        provider = LiteLLMProvider(calls_per_minute_limit=2)
+
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.01),
+        ):
+            mock_ac.return_value = mock_resp
+            await provider.complete(LLMRequest(prompt="first"))
+            await provider.complete(LLMRequest(prompt="second"))
+
+            # Third call should fail before making API call
+            with pytest.raises(RateLimitExceededError, match="Rate limit exceeded"):
+                await provider.complete(LLMRequest(prompt="third"))
+
+        # Should have only 2 successful calls
+        assert provider.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reset_cost_tracking(self) -> None:
+        """Reset should clear cost and call count tracking."""
+        mock_resp = _make_litellm_response("ok")
+        provider = LiteLLMProvider(cost_limit_usd=10.0)
+
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.5),
+        ):
+            mock_ac.return_value = mock_resp
+            await provider.complete(LLMRequest(prompt="hello"))
+            await provider.complete(LLMRequest(prompt="world"))
+
+        assert provider.total_cost_usd == pytest.approx(1.0)
+        assert provider.call_count == 2
+
+        provider.reset_cost_tracking()
+
+        assert provider.total_cost_usd == 0.0
+        assert provider.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_cost_properties(self) -> None:
+        """total_cost_usd and call_count should be accessible."""
+        provider = LiteLLMProvider()
+
+        # Initial state
+        assert provider.total_cost_usd == 0.0
+        assert provider.call_count == 0
+
+        mock_resp = _make_litellm_response("ok")
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.25),
+        ):
+            mock_ac.return_value = mock_resp
+            await provider.complete(LLMRequest(prompt="test"))
+
+        # After one call
+        assert provider.total_cost_usd == pytest.approx(0.25)
+        assert provider.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_sliding_window(self) -> None:
+        """Rate limit should use a sliding window (timestamps older than 60s don't count)."""
+        mock_resp = _make_litellm_response("ok")
+        provider = LiteLLMProvider(calls_per_minute_limit=2)
+
+        with (
+            patch("piano.llm.provider.litellm.acompletion", new_callable=AsyncMock) as mock_ac,
+            patch("piano.llm.provider.litellm.completion_cost", return_value=0.01),
+            patch("piano.llm.provider.time.monotonic") as mock_time,
+        ):
+            mock_ac.return_value = mock_resp
+
+            # First call at t=0
+            mock_time.return_value = 0.0
+            await provider.complete(LLMRequest(prompt="first"))
+
+            # Second call at t=1
+            mock_time.return_value = 1.0
+            await provider.complete(LLMRequest(prompt="second"))
+
+            # Third call at t=61 (first call has expired from window)
+            mock_time.return_value = 61.0
+            await provider.complete(LLMRequest(prompt="third"))
+
+        # All three calls should succeed
+        assert provider.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_cost_tracking_ignores_failed_calls(self) -> None:
+        """Failed calls should not increment cost or call count."""
+        provider = LiteLLMProvider(max_retries=1, cost_limit_usd=10.0)
+
+        with (
+            patch(
+                "piano.llm.provider.litellm.acompletion",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("fail"),
+            ),
+            patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(RuntimeError),
+        ):
+            await provider.complete(LLMRequest(prompt="fail"))
+
+        # Cost and count should remain at 0
+        assert provider.total_cost_usd == 0.0
+        assert provider.call_count == 0

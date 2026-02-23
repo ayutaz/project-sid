@@ -9,8 +9,61 @@ Reference: docs/implementation/03-cognitive-controller.md Section 2
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+# --- Compression limits ---
+MAX_INVENTORY_ITEMS = 5
+MAX_NEARBY_PLAYERS = 5
+MAX_RECENT_CHAT = 3
+MAX_GOAL_STACK = 3
+MAX_SUB_GOALS = 3
+MAX_TOP_RELATIONSHIPS = 3
+MAX_RECENT_INTERACTIONS = 2
+MAX_RECENT_ACTIONS = 3
+MAX_WORKING_MEMORY = 5
+MAX_STM_ITEMS = 3
+
+
+def sanitize_text(text: str, max_length: int = 500) -> str:
+    """Sanitize user-generated text to prevent prompt injection attacks.
+
+    Args:
+        text: The text to sanitize.
+        max_length: Maximum length to truncate to.
+
+    Returns:
+        Sanitized text string.
+    """
+    if not text:
+        return ""
+
+    # Truncate to max length
+    sanitized = text[:max_length]
+
+    # Remove control characters (except newline, tab, carriage return)
+    sanitized = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]", "", sanitized)
+
+    # Escape potential prompt injection patterns
+    # Replace common prompt injection phrases with safe alternatives
+    injection_patterns = {
+        r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
+        r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
+        r"forget\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
+        r"system\s*:\s*": "system - ",
+        r"<\|.*?\|>": "",  # Remove special tokens like <|system|>, <|endoftext|>
+        r"```[\s\S]*?```": "[code block]",  # Remove markdown code blocks
+        r"</?(?:system|assistant|user)>": "",  # Remove XML-like tags for roles
+    }
+
+    for pattern, replacement in injection_patterns.items():
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+
+    # Limit excessive repetition (potential token manipulation)
+    sanitized = re.sub(r"(.)\1{10,}", r"\1\1\1", sanitized)
+
+    return sanitized
 
 
 @dataclass(frozen=True)
@@ -81,23 +134,23 @@ class TemplateCompressor:
         health = percepts.get("health", 20.0)
         hunger = percepts.get("hunger", 20.0)
 
-        # Inventory: top 5 items by count
+        # Inventory: top N items by count
         inv = percepts.get("inventory", {})
-        top_items = sorted(inv.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        top_items = sorted(inv.items(), key=lambda kv: kv[1], reverse=True)[:MAX_INVENTORY_ITEMS]
         inv_str = ", ".join(f"{k}x{v}" for k, v in top_items) if top_items else "empty"
 
         nearby = percepts.get("nearby_players", [])
-        nearby_str = ", ".join(nearby[:5]) if nearby else "none"
+        nearby_str = ", ".join(nearby[:MAX_NEARBY_PLAYERS]) if nearby else "none"
 
         weather = percepts.get("weather", "clear")
         tod = percepts.get("time_of_day", 0)
 
-        # Recent chat (last 3)
+        # Recent chat - sanitize all chat messages
         chats = percepts.get("chat_messages", [])
         chat_lines: list[str] = []
-        for msg in chats[-3:]:
-            sender = msg.get("sender", "?")
-            text = msg.get("message", msg.get("text", ""))
+        for msg in chats[-MAX_RECENT_CHAT:]:
+            sender = sanitize_text(msg.get("sender", "?"), max_length=50)
+            text = sanitize_text(msg.get("message", msg.get("text", "")), max_length=200)
             chat_lines.append(f"  {sender}: {text}")
         chat_str = "\n".join(chat_lines) if chat_lines else "  (none)"
 
@@ -114,17 +167,19 @@ class TemplateCompressor:
         if not goals:
             return "No goals."
 
-        current = goals.get("current_goal", "")
+        current = sanitize_text(goals.get("current_goal", ""), max_length=200)
         stack = goals.get("goal_stack", [])
         sub = goals.get("sub_goals", [])
 
         lines = []
         if current:
             lines.append(f"Primary: {current}")
-        for g in stack[:3]:
-            lines.append(f"- {g}")
+        for g in stack[:MAX_GOAL_STACK]:
+            sanitized_g = sanitize_text(str(g), max_length=150)
+            lines.append(f"- {sanitized_g}")
         if sub:
-            lines.append(f"Sub-goals: {', '.join(sub[:3])}")
+            sanitized_sub = [sanitize_text(str(s), max_length=100) for s in sub[:MAX_SUB_GOALS]]
+            lines.append(f"Sub-goals: {', '.join(sanitized_sub)}")
         return "\n".join(lines) if lines else "No goals."
 
     def _compress_social(self, social: dict[str, Any]) -> str:
@@ -134,9 +189,11 @@ class TemplateCompressor:
 
         lines: list[str] = []
 
-        # Relationships: top 3 by absolute affinity
+        # Relationships: top N by absolute affinity
         rels = social.get("relationships", {})
-        top_rels = sorted(rels.items(), key=lambda kv: abs(kv[1]), reverse=True)[:3]
+        top_rels = sorted(
+            rels.items(), key=lambda kv: abs(kv[1]), reverse=True
+        )[:MAX_TOP_RELATIONSHIPS]
         if top_rels:
             lines.append(
                 "Relationships: "
@@ -150,11 +207,11 @@ class TemplateCompressor:
             if emo_parts:
                 lines.append("Emotions: " + ", ".join(emo_parts))
 
-        # Recent interactions (last 2)
+        # Recent interactions - sanitize interaction data
         interactions = social.get("recent_interactions", [])
-        for inter in interactions[-2:]:
-            partner = inter.get("partner", inter.get("agent", "?"))
-            action = inter.get("action", inter.get("type", "?"))
+        for inter in interactions[-MAX_RECENT_INTERACTIONS:]:
+            partner = sanitize_text(inter.get("partner", inter.get("agent", "?")), max_length=50)
+            action = sanitize_text(inter.get("action", inter.get("type", "?")), max_length=100)
             lines.append(f"- Interaction with {partner}: {action}")
 
         return "\n".join(lines) if lines else "No notable social context."
@@ -179,21 +236,22 @@ class TemplateCompressor:
         lines = [f"Plan ({status}): step {current_step + 1}/{total}"]
         for i in range(window_start, window_end):
             marker = ">>>" if i == current_step else "   "
-            lines.append(f"{marker} {i + 1}. {steps[i]}")
+            step_text = sanitize_text(str(steps[i]), max_length=150)
+            lines.append(f"{marker} {i + 1}. {step_text}")
 
         return "\n".join(lines)
 
     def _compress_action_history(self, history: list[dict[str, Any]]) -> str:
-        """Compress action history (last 3 actions)."""
+        """Compress action history."""
         if not history:
             return "No recent actions."
 
         lines: list[str] = []
-        for entry in history[-3:]:
-            action = entry.get("action", "?")
+        for entry in history[-MAX_RECENT_ACTIONS:]:
+            action = sanitize_text(entry.get("action", "?"), max_length=100)
             success = entry.get("success", True)
             result_icon = "OK" if success else "FAIL"
-            actual = entry.get("actual_result", "")
+            actual = sanitize_text(entry.get("actual_result", ""), max_length=150)
             line = f"- [{result_icon}] {action}"
             if actual:
                 line += f" -> {actual}"
@@ -209,16 +267,16 @@ class TemplateCompressor:
         """Compress memory entries (WM + top STM by importance)."""
         lines: list[str] = []
 
-        # Working memory (all, should be small)
-        for entry in working_memory[:5]:
-            content = entry.get("content", "")
+        # Working memory (all, should be small) - sanitize content
+        for entry in working_memory[:MAX_WORKING_MEMORY]:
+            content = sanitize_text(entry.get("content", ""), max_length=200)
             if content:
                 lines.append(f"- [WM] {content}")
 
-        # STM: top 3 by importance
+        # STM: top N by importance - sanitize content
         sorted_stm = sorted(stm, key=lambda e: e.get("importance", 0.0), reverse=True)
-        for entry in sorted_stm[:3]:
-            content = entry.get("content", "")
+        for entry in sorted_stm[:MAX_STM_ITEMS]:
+            content = sanitize_text(entry.get("content", ""), max_length=200)
             if content:
                 lines.append(f"- [STM] {content}")
 
@@ -300,8 +358,7 @@ class TemplateCompressor:
             has_data = bool(snap_data)
             if isinstance(snap_data, dict):
                 has_data = any(
-                    v for v in snap_data.values()
-                    if v and v != 0 and v != 0.0
+                    v is not None for v in snap_data.values()
                 )
             elif isinstance(snap_data, list):
                 has_data = len(snap_data) > 0

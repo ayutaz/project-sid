@@ -23,6 +23,9 @@ from piano.core.types import ActionHistoryEntry, ModuleResult, ModuleTier, Perce
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
 
+# Movement success tolerance (blocks)
+POSITION_TOLERANCE = 5.0
+
 
 class ActionAwareness(Module):
     """Rule-based action awareness for Phase 0 MVP.
@@ -133,7 +136,7 @@ class ActionAwareness(Module):
     def check_move(
         self, expected: dict[str, Any], actual_position: dict[str, float]
     ) -> bool:
-        """Check if the agent arrived within 5 blocks of the target position."""
+        """Check if the agent arrived within tolerance of the target position."""
         target_x = float(expected.get("x", 0))
         target_y = float(expected.get("y", 0))
         target_z = float(expected.get("z", 0))
@@ -147,7 +150,7 @@ class ActionAwareness(Module):
             + (target_y - actual_y) ** 2
             + (target_z - actual_z) ** 2
         )
-        return distance <= 5.0
+        return distance <= POSITION_TOLERANCE
 
     def check_mine(self, expected: dict[str, Any], percepts: PerceptData) -> bool:
         """Check if the target block was removed from nearby_blocks."""
@@ -190,7 +193,7 @@ class ActionAwareness(Module):
         if not expected_message:
             return False
 
-        return any(expected_message in msg.get("text", "") for msg in chat_messages)
+        return any(expected_message in msg.get("message", "") for msg in chat_messages)
 
     # ------------------------------------------------------------------
     # Discrepancy builder

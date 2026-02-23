@@ -9,6 +9,8 @@ Reference: docs/implementation/01-system-architecture.md
 
 from __future__ import annotations
 
+__all__ = ["Module"]
+
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -23,8 +25,13 @@ class Module(ABC):
     Modules are stateless processors that:
     1. Read from SAS on each tick
     2. Perform computation (possibly calling LLM)
-    3. Write results back to SAS
-    4. Optionally react to CC broadcast decisions
+    3. Write results DIRECTLY back to SAS (primary state update path)
+    4. Optionally react to CC broadcast decisions (for output modules)
+
+    The ModuleResult returned from tick() is used for:
+    - CC information bottleneck input (compression)
+    - Debug metadata and telemetry
+    - NOT for state updates (modules write directly to SAS)
     """
 
     @property
@@ -43,8 +50,12 @@ class Module(ABC):
     async def tick(self, sas: SharedAgentState) -> ModuleResult:
         """Execute one tick of this module.
 
-        Read from SAS, perform computation, write results back to SAS,
-        and return a ModuleResult summarizing what happened.
+        Read from SAS, perform computation, and WRITE DIRECTLY to SAS.
+        The returned ModuleResult is for CC compression input and debug
+        metadata only - it is NOT used for state updates.
+
+        Returns:
+            ModuleResult summarizing what happened (for CC and telemetry).
         """
         ...
 
@@ -52,7 +63,9 @@ class Module(ABC):
         """Handle a CC broadcast decision.
 
         Output modules (talking, skill execution) implement this to
-        react to CC decisions. Input/processing modules can ignore it.
+        react to CC decisions and trigger side effects (e.g., executing
+        a skill, sending a chat message). Input/processing modules can
+        ignore this method.
         """
 
     async def initialize(self) -> None:  # noqa: B027

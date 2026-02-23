@@ -189,3 +189,196 @@ class TestSkillExecutorShutdown:
 
         await executor.shutdown()
         assert task.done()
+
+
+# ---------------------------------------------------------------------------
+# Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestSkillExecutorEdgeCases:
+    """Edge case tests for cancellation, rapid broadcasts, and unusual inputs."""
+
+    async def test_cancel_during_execution(self, registry, sas: MockSAS) -> None:
+        """Cancel an actively executing skill."""
+        slow_bridge = SlowBridgeClient(delay=5.0)
+        executor = SkillExecutor(
+            registry=registry, bridge=slow_bridge, sas=sas, timeout_s=30.0
+        )
+
+        decision = CCDecision(action="move_to", action_params={"x": 1, "y": 2, "z": 3})
+        await executor.on_broadcast(decision)
+        task = executor._current_task
+        assert task is not None
+
+        # Give the task time to actually start executing
+        await asyncio.sleep(0.1)
+        assert not task.done()
+
+        # Manually cancel and wait for cleanup
+        await executor._cancel_current()
+
+        assert task.done()
+        assert executor._current_task is None
+
+        # Should have recorded cancellation
+        assert len(sas.actions) == 1
+        assert sas.actions[0].success is False
+        assert "cancelled" in sas.actions[0].actual_result
+
+    async def test_broadcast_while_executing_cancels_current(
+        self, registry, sas: MockSAS
+    ) -> None:
+        """New broadcast interrupts and cancels current skill."""
+        slow_bridge = SlowBridgeClient(delay=5.0)
+        executor = SkillExecutor(
+            registry=registry, bridge=slow_bridge, sas=sas, timeout_s=30.0
+        )
+
+        # Start first skill
+        decision1 = CCDecision(action="move_to", action_params={"x": 0, "y": 0, "z": 0})
+        await executor.on_broadcast(decision1)
+        first_task = executor._current_task
+        assert first_task is not None
+
+        # Give it a moment to start
+        await asyncio.sleep(0.05)
+
+        # Immediately start second skill (should cancel first)
+        decision2 = CCDecision(action="chat", action_params={"message": "hello"})
+        await executor.on_broadcast(decision2)
+        second_task = executor._current_task
+
+        # First task should be cancelled
+        assert first_task.done()
+        assert second_task is not None
+        assert second_task != first_task
+
+        # Wait for second to complete
+        await second_task
+
+        # Give the cancelled task time to record
+        await asyncio.sleep(0.1)
+
+        # Should have two actions: first cancelled, second succeeded
+        assert len(sas.actions) == 2
+        assert sas.actions[0].action == "move_to"
+        assert sas.actions[0].success is False
+        assert "cancelled" in sas.actions[0].actual_result
+        assert sas.actions[1].action == "chat"
+        assert sas.actions[1].success is True
+
+    async def test_execute_unknown_skill(self, registry, sas: MockSAS) -> None:
+        """Attempting to execute a non-existent skill records failure."""
+        bridge = MockBridgeClient()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas, timeout_s=5.0)
+
+        decision = CCDecision(
+            action="teleport", action_params={"x": 100, "y": 200, "z": 300}
+        )
+        await executor.on_broadcast(decision)
+
+        # Should record failure immediately
+        assert len(sas.actions) == 1
+        assert sas.actions[0].action == "teleport"
+        assert sas.actions[0].success is False
+        assert "not found" in sas.actions[0].actual_result
+
+    async def test_multiple_rapid_broadcasts(self, registry, sas: MockSAS) -> None:
+        """Rapid sequential broadcasts cancel previous tasks correctly."""
+        slow_bridge = SlowBridgeClient(delay=2.0)
+        executor = SkillExecutor(
+            registry=registry, bridge=slow_bridge, sas=sas, timeout_s=30.0
+        )
+
+        # Send 5 rapid broadcasts
+        decisions = [
+            CCDecision(action="move_to", action_params={"x": i, "y": i, "z": i})
+            for i in range(5)
+        ]
+
+        tasks = []
+        for decision in decisions:
+            await executor.on_broadcast(decision)
+            if executor._current_task:
+                tasks.append(executor._current_task)
+            await asyncio.sleep(0.05)  # Small delay between broadcasts
+
+        # Wait for the last task to complete
+        if executor._current_task:
+            await executor._current_task
+
+        # All but the last task should be cancelled
+        for task in tasks[:-1]:
+            assert task.done()
+
+        # Should have multiple cancelled actions and one success
+        assert len(sas.actions) >= 5
+        cancelled_count = sum(
+            1 for action in sas.actions if "cancelled" in action.actual_result
+        )
+        assert cancelled_count >= 4
+
+    async def test_on_broadcast_with_no_action(self, executor: SkillExecutor, sas: MockSAS) -> None:
+        """CCDecision with action=None or empty string does nothing."""
+        # Test with None (using empty string as None is not allowed by Pydantic)
+        decision1 = CCDecision(action="")
+        await executor.on_broadcast(decision1)
+        assert len(sas.actions) == 0
+
+        # Test with "idle"
+        decision2 = CCDecision(action="idle")
+        await executor.on_broadcast(decision2)
+        assert len(sas.actions) == 0
+
+    async def test_tick_reports_current_action(self, registry, sas: MockSAS) -> None:
+        """Tick reports the currently executing action name."""
+        slow_bridge = SlowBridgeClient(delay=2.0)
+        executor = SkillExecutor(
+            registry=registry, bridge=slow_bridge, sas=sas, timeout_s=30.0
+        )
+
+        # Start a skill
+        decision = CCDecision(action="move_to", action_params={"x": 10, "y": 20, "z": 30})
+        await executor.on_broadcast(decision)
+
+        # Tick should report it's executing
+        result = await executor.tick(sas)
+        assert result.data["executing"] is True
+        assert result.data["current_action"] == "move_to"
+
+        # Wait for completion
+        if executor._current_task:
+            await executor._current_task
+
+        # Tick should report idle
+        result = await executor.tick(sas)
+        assert result.data["executing"] is False
+
+    async def test_execute_with_missing_params(self, registry, sas: MockSAS) -> None:
+        """Executing a skill with missing required params raises an error."""
+        bridge = MockBridgeClient()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas, timeout_s=5.0)
+
+        # move_to requires x, y, z - provide only x
+        decision = CCDecision(action="move_to", action_params={"x": 1})
+        await executor.on_broadcast(decision)
+
+        if executor._current_task:
+            await executor._current_task
+
+        # Should record an error
+        assert len(sas.actions) == 1
+        assert sas.actions[0].success is False
+        assert "error" in sas.actions[0].actual_result
+
+    async def test_cancel_when_no_task_running(self, executor: SkillExecutor) -> None:
+        """Cancelling when no task is running is a no-op."""
+        # Should not raise
+        await executor._cancel_current()
+        assert executor._current_task is None
+
+    async def test_shutdown_when_idle(self, executor: SkillExecutor) -> None:
+        """Shutting down when no task is running is safe."""
+        await executor.shutdown()
+        assert executor._current_task is None

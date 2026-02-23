@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from piano.cc.broadcast import BroadcastManager, BroadcastResult
@@ -22,17 +22,35 @@ from piano.core.types import CCDecision, LLMRequest, LLMResponse, ModuleResult, 
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
+    from piano.llm.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
-# -- LLM provider protocol (implemented externally) -----------------------
+# -- Valid actions for CC decision validation -----------------------------
 
-
-class LLMProvider(Protocol):
-    """Protocol for the LLM backend used by the CC."""
-
-    async def complete(self, request: LLMRequest) -> LLMResponse: ...
+VALID_ACTIONS: frozenset[str] = frozenset({
+    "move",
+    "mine",
+    "craft",
+    "chat",
+    "look",
+    "get_position",
+    "get_inventory",
+    "idle",
+    "wait",
+    "explore",
+    "attack",
+    "dig",
+    "place",
+    "equip",
+    "use",
+    "drop",
+    "follow",
+    "flee",
+    "build",
+    "gather",
+})
 
 
 # -- CC prompt template ----------------------------------------------------
@@ -171,16 +189,40 @@ class CognitiveController(Module):
         response: LLMResponse,
         compression: CompressionResult,
     ) -> CCDecision:
-        """Parse LLM JSON response into a CCDecision."""
+        """Parse LLM JSON response into a CCDecision with validation."""
         raw = response.content.strip()
         data: dict[str, Any] = json.loads(raw)
+
+        # Validate action field
+        action = data.get("action", "idle")
+        if action not in VALID_ACTIONS:
+            logger.warning(
+                "Invalid action '%s' not in VALID_ACTIONS (cycle %d), "
+                "falling back to previous or idle",
+                action,
+                self._cycle_count,
+            )
+            # Fall back to previous decision's action if available, otherwise idle
+            if self._last_decision is not None:
+                raise ValueError(f"Invalid action: {action}")
+            action = "idle"
+
+        # Validate action_params is a dict
+        action_params = data.get("action_params", {})
+        if not isinstance(action_params, dict):
+            logger.warning(
+                "action_params is not a dict (type: %s) in cycle %d, using empty dict",
+                type(action_params).__name__,
+                self._cycle_count,
+            )
+            action_params = {}
 
         return CCDecision(
             cycle_id=uuid4(),
             timestamp=datetime.now(UTC),
             summary=compression.text[:200],
-            action=data.get("action", "idle"),
-            action_params=data.get("action_params", {}),
+            action=action,
+            action_params=action_params,
             speaking=data.get("speaking"),
             reasoning=data.get("reasoning", ""),
             salience_scores=data.get("salience_scores", {}),

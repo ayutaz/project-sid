@@ -9,6 +9,8 @@ Reference: docs/implementation/01-system-architecture.md
 
 from __future__ import annotations
 
+__all__ = ["ModuleScheduler", "SchedulerState"]
+
 import asyncio
 import contextlib
 from enum import StrEnum

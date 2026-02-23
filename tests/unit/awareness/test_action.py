@@ -314,7 +314,7 @@ class TestCheckChat:
         ]
         sas._percepts = PerceptData(
             chat_messages=[
-                {"sender": "test-agent", "text": "hello everyone"},
+                {"sender": "test-agent", "message": "hello everyone"},
             ]
         )
 
@@ -333,7 +333,7 @@ class TestCheckChat:
         ]
         sas._percepts = PerceptData(
             chat_messages=[
-                {"sender": "other-agent", "text": "something else"},
+                {"sender": "other-agent", "message": "something else"},
             ]
         )
 
