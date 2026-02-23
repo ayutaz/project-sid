@@ -1,0 +1,135 @@
+"""Working Memory (WM) for the PIANO architecture.
+
+Working Memory holds the agent's immediate context: the latest CC broadcast
+result, current task context, and recent perceptions. It is the fastest
+memory tier, accessed every tick by the Cognitive Controller.
+
+Capacity: max 10 MemoryEntry items.
+Eviction: lowest (importance * recency) score is dropped first.
+
+Reference: docs/implementation/04-memory-system.md Section 4.2.1
+"""
+
+from __future__ import annotations
+
+import math
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from piano.core.types import MemoryEntry
+
+if TYPE_CHECKING:
+    from piano.core.sas import SharedAgentState
+
+_MAX_CAPACITY = 10
+
+
+def _recency_score(entry: MemoryEntry, now: datetime) -> float:
+    """Exponential decay based on age.  lambda = 0.5 per hour."""
+    age_hours = max((now - entry.timestamp).total_seconds() / 3600.0, 0.0)
+    return math.exp(-0.5 * age_hours)
+
+
+def _eviction_score(entry: MemoryEntry, now: datetime) -> float:
+    """Combined score used for eviction: importance * recency.
+
+    Lower score -> evicted first.
+    """
+    return entry.importance * _recency_score(entry, now)
+
+
+class WorkingMemory:
+    """In-memory store for the agent's immediate cognitive context.
+
+    All public mutating methods sync back to SAS when a SAS reference is
+    attached. The memory is purely in-process (no external DB).
+    """
+
+    def __init__(self, capacity: int = _MAX_CAPACITY) -> None:
+        self._entries: list[MemoryEntry] = []
+        self._capacity = capacity
+        self._sas: SharedAgentState | None = None
+
+    # --- SAS binding ---
+
+    def bind_sas(self, sas: SharedAgentState) -> None:
+        """Attach a SAS instance for automatic synchronisation."""
+        self._sas = sas
+
+    # --- Core API ---
+
+    def add(self, entry: MemoryEntry) -> MemoryEntry | None:
+        """Add an entry to working memory.
+
+        If capacity is exceeded the entry with the lowest eviction score
+        is removed and returned. Returns ``None`` when no eviction occurs.
+        """
+        self._entries.append(entry)
+        evicted: MemoryEntry | None = None
+        if len(self._entries) > self._capacity:
+            evicted = self._evict_one()
+        return evicted
+
+    def get_all(self) -> list[MemoryEntry]:
+        """Return all working memory entries (newest first)."""
+        return sorted(self._entries, key=lambda e: e.timestamp, reverse=True)
+
+    def get_by_category(self, category: str) -> list[MemoryEntry]:
+        """Return entries matching *category* (newest first)."""
+        return sorted(
+            [e for e in self._entries if e.category == category],
+            key=lambda e: e.timestamp,
+            reverse=True,
+        )
+
+    def clear(self) -> None:
+        """Remove all entries."""
+        self._entries.clear()
+
+    @property
+    def size(self) -> int:
+        """Current number of entries."""
+        return len(self._entries)
+
+    @property
+    def capacity(self) -> int:
+        """Maximum capacity."""
+        return self._capacity
+
+    def is_full(self) -> bool:
+        """Return whether memory is at capacity."""
+        return len(self._entries) >= self._capacity
+
+    def remove(self, entry_id: str) -> bool:
+        """Remove an entry by its UUID string. Returns True if found."""
+        for i, e in enumerate(self._entries):
+            if str(e.id) == entry_id:
+                self._entries.pop(i)
+                return True
+        return False
+
+    # --- SAS sync ---
+
+    async def sync_to_sas(self) -> None:
+        """Push current entries to the bound SAS."""
+        if self._sas is not None:
+            await self._sas.set_working_memory(list(self._entries))
+
+    async def sync_from_sas(self) -> None:
+        """Pull entries from SAS into local state."""
+        if self._sas is not None:
+            self._entries = list(await self._sas.get_working_memory())
+
+    # --- Internal ---
+
+    def _evict_one(self) -> MemoryEntry:
+        """Remove and return the entry with the lowest eviction score."""
+        now = datetime.now(timezone.utc)
+        worst_idx = 0
+        worst_score = float("inf")
+        for i, entry in enumerate(self._entries):
+            score = _eviction_score(entry, now)
+            if score < worst_score:
+                worst_score = score
+                worst_idx = i
+        return self._entries.pop(worst_idx)

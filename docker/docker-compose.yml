@@ -1,0 +1,70 @@
+# Docker Compose for PIANO local development environment
+# Usage: docker compose -f docker/docker-compose.yml up -d
+
+services:
+  # --- Redis: Cache, Pub/Sub, Shared State ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- PostgreSQL: Agent State, Memory, Experiment Results ---
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: piano
+      POSTGRES_USER: piano
+      POSTGRES_PASSWORD: piano_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U piano -d piano"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- Minecraft: Pufferfish Server ---
+  minecraft:
+    image: itzg/minecraft-server
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: "TRUE"
+      TYPE: PUFFERFISH
+      VERSION: "1.20.4"
+      ONLINE_MODE: "FALSE"
+      MAX_PLAYERS: 100
+      VIEW_DISTANCE: 8
+      MEMORY: 2G
+    volumes:
+      - mc_data:/data
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - piano_network
+
+networks:
+  piano_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
+  mc_data:

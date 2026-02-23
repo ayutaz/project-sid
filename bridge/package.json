@@ -1,0 +1,24 @@
+{
+  "name": "@piano/mineflayer-bridge",
+  "version": "0.1.0",
+  "description": "ZMQ bridge between PIANO Python backend and Mineflayer bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "dev": "ts-node --respawn src/index.ts"
+  },
+  "dependencies": {
+    "mineflayer": "^4.23.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "minecraft-data": "^3.69.0",
+    "zeromq": "^6.0.0-beta.20",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.0"
+  }
+}
