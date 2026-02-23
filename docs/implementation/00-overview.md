@@ -2,7 +2,7 @@
 
 > 概要: PIANOアーキテクチャ再現実装の全ドキュメントのインデックス、技術判断、読み方ガイド
 > 対応論文セクション: 全セクション横断
-> 最終更新: 2026-02-23
+> 最終更新: 2026-02-24
 
 ---
 
@@ -13,7 +13,7 @@
 1. **並行性（Concurrency）**: 高速反射モジュール（非LLM）と低速熟慮モジュール（LLM）が異なる速度で並列実行
 2. **一貫性（Coherence）**: 認知コントローラ（CC）がGWT情報ボトルネック+ブロードキャストで全モジュール間の一貫性を制御
 
-**現在の状態**: **Phase 2 実装完了**（検証待ち）。1,927テスト全通過、ruff lint clean。Phase 0コアモジュール + Phase 1全モジュール統合（10体動作） + Phase 2スケーリング基盤（50体対応）が実装済み。次のステップはPhase 2 E2E検証およびPhase 3準備。
+**現在の状態**: **Phase 2 実装完了**（検証待ち）。1,979テスト全通過、ruff lint clean。Phase 0コアモジュール + Phase 1全モジュール統合（10体動作） + Phase 2スケーリング基盤（50体対応） + 残タスク（CLIランチャー、TLS通信、K8s NetworkPolicy、NetworkXベンチマーク、障害注入テスト、E2Eテスト基盤、Grafanaアラート）が実装済み。次のステップはPhase 2 E2E検証（MC接続）およびPhase 3準備。
 
 ---
 
@@ -186,7 +186,7 @@
   - インフラ: Checkpoint/Restore, SAS Phase1 Mixin, Orchestrator(10エージェント管理)
   - スキル拡張: Social Skills(trade/gift/vote), Advanced Skills(craft chain/farming/combat)
   - ブリッジ拡張: Protocol extensions(batch commands, validation, serialization)
-- **完了**: Phase 2 実装（1,927テスト全通過、検証待ち）
+- **完了**: Phase 2 実装（1,979テスト全通過、検証待ち）
   - スケーリング: WorkerPool, Supervisor, Sharding, ResourceLimiter
   - 可観測性: 構造化ログ, Prometheusメトリクス, トレーシング
   - 社会認知拡張: CollectiveIntelligence, InfluencerAnalysis
@@ -195,9 +195,16 @@
   - ブリッジ拡張: VelocityProxy(マルチサーバー)
   - インフラ: DistributedCheckpoint, Kubernetes manifests, Grafana/Prometheus監視基盤
   - CI: Phase 2パイプライン
+  - CLIランチャー: `piano` コマンド（--agents, --ticks, --mock-llm, --config, --log-level）
+  - TLS通信: Redis SSL, CurveZMQ(Python+TypeScript), Qdrant HTTPS/API Key
+  - K8s NetworkPolicy: default-deny + コンポーネント間通信許可（11ポリシー）
+  - NetworkXベンチマーク: 10/50/100/500体でのグラフ操作性能計測
+  - 障害注入テスト: Redis/Bridge/LLM/Agent障害シミュレータ（chaos framework）
+  - E2Eテスト基盤: --run-e2eフラグ、InMemorySAS使用の最小E2E
+  - Grafanaアラート: コスト/エラー率/TPS/メモリの4種アラートルール
 - **次のステップ**:
   1. Phase 2 E2E検証（50体MC接続、スケーリング動作確認）
-  2. スケーリング負荷テスト（ワーカープール、シャーディング性能測定）
+  2. 言行一致改善率30%測定（品質ゲート）
   3. Phase 3準備（500体規模、文明シミュレーション設計）
 
 ---

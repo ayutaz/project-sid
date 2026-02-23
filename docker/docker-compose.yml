@@ -16,6 +16,15 @@ services:
       retries: 5
     networks:
       - piano_network
+    # TLS Configuration (uncomment when PIANO_TLS_ENABLED=true)
+    # command: redis-server /usr/local/etc/redis/redis-tls.conf
+    # volumes:
+    #   - redis_data:/data
+    #   - ./redis/redis-tls.conf:/usr/local/etc/redis/redis-tls.conf:ro
+    #   - ./certs:/tls:ro
+    # ports:
+    #   - "6379:6379"
+    #   - "6380:6380"
 
   # --- PostgreSQL: Agent State, Memory, Experiment Results ---
   postgres:

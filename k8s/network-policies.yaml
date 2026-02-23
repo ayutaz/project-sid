@@ -1,0 +1,310 @@
+# Project Sid - Network Policies
+# Defines network segmentation for the PIANO system.
+# Default-deny with explicit allow rules per component.
+---
+# 1. Default deny all ingress and egress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: project-sid
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. Agent worker egress: redis, qdrant, minecraft ZMQ, llm-gateway, DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-worker-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-cluster
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Qdrant HTTP + gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+        - protocol: TCP
+          port: 6334
+    # Minecraft shard ZMQ (REQ-REP + PUB-SUB)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minecraft-shard
+      ports:
+        - protocol: TCP
+          port: 5555
+        - protocol: TCP
+          port: 5556
+    # LLM Gateway
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llm-gateway
+      ports:
+        - protocol: TCP
+          port: 8000
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. LLM gateway egress: redis, external LLM APIs (443), DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-gateway-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  policyTypes:
+    - Egress
+  egress:
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-cluster
+      ports:
+        - protocol: TCP
+          port: 6379
+    # External LLM APIs (OpenAI, Anthropic, etc.) on HTTPS
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 4. LLM gateway ingress: from agent-worker on port 8000
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-gateway-ingress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-worker
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# 5. Redis cluster ingress: from agent-worker, llm-gateway, minecraft-shard on port 6379
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-cluster-ingress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-worker
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llm-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minecraft-shard
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+# 6. Qdrant ingress: from agent-worker on ports 6333, 6334
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-ingress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-worker
+      ports:
+        - protocol: TCP
+          port: 6333
+        - protocol: TCP
+          port: 6334
+---
+# 7. Minecraft shard egress: redis, DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minecraft-shard-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minecraft-shard
+  policyTypes:
+    - Egress
+  egress:
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-cluster
+      ports:
+        - protocol: TCP
+          port: 6379
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 8. Minecraft shard ingress: from agent-worker on ZMQ ports
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minecraft-shard-ingress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minecraft-shard
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-worker
+      ports:
+        - protocol: TCP
+          port: 5555
+        - protocol: TCP
+          port: 5556
+---
+# 9. Monitoring egress: Prometheus scrapes all pods on metrics port
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: monitoring
+  policyTypes:
+    - Egress
+  egress:
+    # Scrape metrics from all pods in namespace
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9090
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 10. Allow all pods to receive metrics scrapes from monitoring
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-ingress
+  namespace: project-sid
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+# 11. DNS egress for all pods (kube-dns in kube-system namespace)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: project-sid
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -34,3 +34,5 @@ resources:
   - minecraft-shard.yaml
   # Observability
   - monitoring.yaml
+  # Network Policies
+  - network-policies.yaml

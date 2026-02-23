@@ -158,6 +158,8 @@ class QdrantLTMStore:
         url: str = "http://localhost:6333",
         collection_prefix: str = "ltm",
         embedding_dim: int = 384,
+        use_https: bool = False,
+        api_key: str | None = None,
     ) -> None:
         """Initialize the Qdrant LTM store.
 
@@ -165,10 +167,14 @@ class QdrantLTMStore:
             url: Qdrant server URL.
             collection_prefix: Prefix for collection names.
             embedding_dim: Dimension of embedding vectors (default: 384 for MiniLM).
+            use_https: Whether to connect to Qdrant over HTTPS.
+            api_key: Optional API key for Qdrant authentication.
         """
         self.url = url
         self.collection_prefix = collection_prefix
         self.embedding_dim = embedding_dim
+        self.use_https = use_https
+        self.api_key = api_key
         self._client: object | None = None  # qdrant_client.QdrantClient
         logger.info(
             "qdrant_ltm_init",
@@ -182,7 +188,12 @@ class QdrantLTMStore:
         try:
             from qdrant_client import QdrantClient
 
-            self._client = QdrantClient(url=self.url)
+            kwargs: dict[str, object] = {"url": self.url}
+            if self.use_https:
+                kwargs["https"] = True
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+            self._client = QdrantClient(**kwargs)
 
             # Note: Collections are created on-demand per agent in store()
             logger.info("qdrant_initialized", url=self.url)

@@ -17,6 +17,10 @@ class RedisSettings(BaseModel):
     port: int = 6379
     db: int = 0
     password: str | None = None
+    ssl_enabled: bool = False
+    ssl_ca_certs: str | None = None
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
 
 
 class LLMSettings(BaseModel):
@@ -43,6 +47,10 @@ class BridgeSettings(BaseModel):
     host: str = "localhost"
     command_port: int = 5555
     event_port: int = 5556
+    tls_enabled: bool = False
+    curve_public_key: str | None = None
+    curve_secret_key: str | None = None
+    curve_server_key: str | None = None
 
 
 class MinecraftSettings(BaseModel):
@@ -74,6 +82,8 @@ class QdrantSettings(BaseModel):
     url: str = "http://localhost:6333"
     collection_prefix: str = "ltm"
     embedding_dim: int = 1536
+    use_https: bool = False
+    api_key: str | None = None
 
 
 class LocalLLMSettings(BaseModel):

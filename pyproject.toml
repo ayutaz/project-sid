@@ -16,6 +16,8 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.12",
     "qdrant-client>=1.7",
+    "cryptography>=43.0",
+    "pynacl>=1.5",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +32,9 @@ dev = [
     "fakeredis>=2.25",
 ]
 
+[project.scripts]
+piano = "piano.main:cli"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -43,6 +48,9 @@ asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "benchmark: marks tests as benchmark tests (deselect with '-m \"not benchmark\"')",
+    "e2e: marks tests as end-to-end tests (deselect with '-m \"not e2e\"')",
+    "chaos: marks tests as fault injection tests (deselect with '-m \"not chaos\"')",
 ]
 
 [tool.ruff]

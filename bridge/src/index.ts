@@ -29,6 +29,12 @@ const PERCEPTION_INTERVAL_MS = parseInt(
   10
 );
 
+const ZMQ_TLS_ENABLED = process.env.ZMQ_TLS_ENABLED === "true";
+const ZMQ_CURVE_SERVER_PUBLIC_KEY =
+  process.env.ZMQ_CURVE_SERVER_PUBLIC_KEY ?? "";
+const ZMQ_CURVE_SERVER_SECRET_KEY =
+  process.env.ZMQ_CURVE_SERVER_SECRET_KEY ?? "";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -164,6 +170,20 @@ async function main(): Promise<void> {
   // ZMQ sockets
   const repSocket = new zmq.Reply();
   const pubSocket = new zmq.Publisher();
+
+  // Configure CurveZMQ if TLS is enabled
+  if (ZMQ_TLS_ENABLED) {
+    console.log("[bridge] CurveZMQ TLS enabled");
+
+    // Server-side: the bridge acts as server, clients connect to it
+    repSocket.curveServer = true;
+    repSocket.curveSecretKey = ZMQ_CURVE_SERVER_SECRET_KEY;
+    repSocket.curvePublicKey = ZMQ_CURVE_SERVER_PUBLIC_KEY;
+
+    pubSocket.curveServer = true;
+    pubSocket.curveSecretKey = ZMQ_CURVE_SERVER_SECRET_KEY;
+    pubSocket.curvePublicKey = ZMQ_CURVE_SERVER_PUBLIC_KEY;
+  }
 
   await repSocket.bind(ZMQ_CMD_ADDR);
   await pubSocket.bind(ZMQ_EVT_ADDR);

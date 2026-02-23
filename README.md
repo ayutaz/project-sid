@@ -14,23 +14,16 @@ AI agents have been evaluated in isolation or within small groups, where interac
 
 ## Project Status
 
-**Phase 0 MVP: Complete** - Core PIANO architecture implemented and tested (323 tests passing).
+**Phase 0-2 Complete** — 1,979 tests passing, ruff lint clean. E2E validation (MC connection) pending.
 
-| Module | Status | Description |
-|--------|--------|-------------|
-| Shared Agent State (SAS) | Done | Redis-backed shared state with capacity limits |
-| Module Scheduler | Done | Tick-based parallel execution with 3-tier scheduling |
-| Cognitive Controller (CC) | Done | Template compression + LLM decision + broadcast |
-| Memory (WM + STM) | Done | Working memory (cap 10) + Short-term memory (cap 100) |
-| LLM Abstraction | Done | LiteLLM provider + Mock + Response cache |
-| ZMQ Bridge | Done | Python-TypeScript IPC (REQ-REP + PUB-SUB) |
-| Skills | Done | Registry + 7 basic Minecraft skills + Executor |
-| Action Awareness | Done | Rule-based expectation-outcome comparison |
-| Config | Done | pydantic-settings with env var support |
-| Docker Compose | Done | Redis + PostgreSQL + Pufferfish MC server |
-| CI/CD | Done | GitHub Actions (Python 3.12/3.13, pytest + ruff + mypy) |
+| Phase | Status | Tests | Key Deliverables |
+|-------|--------|-------|------------------|
+| Phase 0: MVP | Done | 407 | SAS (Redis), Scheduler (3-tier), CC (template compression), WM/STM, LLM (LiteLLM+Mock), ZMQ Bridge, 7 Skills, Action Awareness, Config, Docker, CI |
+| Phase 1: Foundation | Done | 1,165 | Goal Generation, Planning, Talking, Self-Reflection, Social Awareness, Big Five Personality, Social Graph, Emotion Tracking, LTM (Qdrant), Memory Consolidation, Model Tiering, LLM Gateway, Local LLM, NN Action Awareness, Checkpoint, Orchestrator (10 agents), Social/Advanced Skills |
+| Phase 2: Scaling | Done | 1,979 | Worker Pool, Supervisor, Sharding, Resource Limiter, Multi-Provider LLM, Prompt Cache, Structured Logging, Prometheus Metrics, Tracing, Collective Intelligence, Influencer Analysis, Governance/Meme/Role Eval, Distributed Checkpoint, K8s Manifests, Network Policies, TLS (Redis/ZMQ/Qdrant), CLI Launcher, Fault Injection Framework, E2E Test Infrastructure, Grafana Alerts |
+| Phase 3: Civilization | Pending | - | Specialization, Collective Rules, Cultural Memes, Religious Propagation |
 
-See [docs/implementation/roadmap.md](docs/implementation/roadmap.md) for the full 4-phase plan (Phase 0-3).
+See [docs/implementation/roadmap.md](docs/implementation/roadmap.md) for the full 4-phase plan.
 
 ## Quick Start
 
@@ -55,11 +48,27 @@ uv run pytest tests/
 uv run ruff check src/ tests/
 ```
 
+### Run Simulation
+
+```bash
+# Single agent with mock LLM (no external dependencies)
+uv run piano --agents 1 --ticks 10 --mock-llm
+
+# Multi-agent with real LLM (requires API key)
+uv run piano --agents 5 --ticks 100
+
+# Also works via python -m
+uv run python -m piano --mock-llm --ticks 10
+```
+
 ### Docker Services
 
 ```bash
 # Start Redis + PostgreSQL + Minecraft server
 docker compose -f docker/docker-compose.yml up -d
+
+# Start Phase 2 stack (Redis + Qdrant + Prometheus + Grafana)
+docker compose -f docker/docker-compose.phase2.yml up -d
 ```
 
 ## Architecture
@@ -104,9 +113,10 @@ docker compose -f docker/docker-compose.yml up -d
 | Shared State | Redis 7+ |
 | LLM | LiteLLM (multi-provider) |
 | Bridge | ZMQ (pyzmq / zeromq.js) |
-| Vector DB | Qdrant (Phase 1) |
+| Vector DB | Qdrant |
 | MC Server | Pufferfish + Velocity |
 | Testing | pytest + pytest-asyncio |
+| TLS/Crypto | cryptography, PyNaCl (CurveZMQ) |
 | Lint | ruff |
 | CI | GitHub Actions |
 

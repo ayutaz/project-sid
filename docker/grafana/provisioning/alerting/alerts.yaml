@@ -1,0 +1,169 @@
+# Grafana Alert Rules for PIANO monitoring
+# Provisioned via Grafana provisioning system
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: piano-cost-alerts
+    folder: PIANO
+    interval: 1m
+    rules:
+      - uid: piano-llm-cost-hourly
+        title: "LLM Cost - Hourly Spend Exceeds Threshold"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "increase(piano_llm_cost_total_usd[1h])"
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 10
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "LLM spending exceeded $10/hour"
+          description: "Hourly LLM cost has exceeded $10. Current spend: {{ $values.A }}"
+        labels:
+          severity: warning
+          team: piano
+
+      - uid: piano-api-error-rate
+        title: "API Error Rate Exceeds 5%"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "rate(piano_errors_total[5m]) / (rate(piano_scheduler_ticks_total[5m]) + 0.001) * 100"
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 5
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "API error rate exceeds 5%"
+          description: "Error rate is {{ $values.A }}%"
+        labels:
+          severity: warning
+          team: piano
+
+      - uid: piano-tps-low
+        title: "Scheduler TPS Below Threshold"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "rate(piano_scheduler_ticks_total[5m])"
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - 15
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Scheduler TPS dropped below 15"
+          description: "Current TPS: {{ $values.A }}"
+        labels:
+          severity: warning
+          team: piano
+
+      - uid: piano-memory-high
+        title: "Agent Memory Usage Exceeds 80%"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "piano_agent_memory_bytes / (64 * 1024 * 1024) * 100"
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 80
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+              refId: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Agent memory usage exceeds 80%"
+          description: "Memory usage is at {{ $values.A }}%"
+        labels:
+          severity: warning
+          team: piano

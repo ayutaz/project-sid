@@ -35,6 +35,7 @@ class BridgeClient:
         command_url: str = "tcp://127.0.0.1:5555",
         event_url: str = "tcp://127.0.0.1:5556",
         timeout_ms: int = DEFAULT_TIMEOUT_MS,
+        tls_config: dict[str, str] | None = None,
     ) -> None:
         """Initialise the bridge client.
 
@@ -42,10 +43,13 @@ class BridgeClient:
             command_url: ZMQ endpoint for command REQ/REP channel.
             event_url: ZMQ endpoint for event PUB/SUB channel.
             timeout_ms: Default timeout for command responses in milliseconds.
+            tls_config: Optional CurveZMQ TLS configuration with keys
+                ``enabled``, ``public_key``, ``secret_key``, ``server_key``.
         """
         self._command_url = command_url
         self._event_url = event_url
         self._timeout_ms = timeout_ms
+        self._tls_config = tls_config
         self._status = BridgeStatus.DISCONNECTED
         self._ctx: zmq.asyncio.Context | None = None
         self._cmd_socket: zmq.asyncio.Socket | None = None
@@ -77,11 +81,13 @@ class BridgeClient:
         self._cmd_socket.setsockopt(zmq.RCVTIMEO, self._timeout_ms)
         self._cmd_socket.setsockopt(zmq.SNDTIMEO, self._timeout_ms)
         self._cmd_socket.setsockopt(zmq.LINGER, 0)
+        self._apply_curve_config(self._cmd_socket)
         self._cmd_socket.connect(self._command_url)
 
         # SUB socket for events
         self._sub_socket = self._ctx.socket(zmq.SUB)
         self._sub_socket.setsockopt(zmq.LINGER, 0)
+        self._apply_curve_config(self._sub_socket)
         self._sub_socket.subscribe(b"")
         self._sub_socket.connect(self._event_url)
 
@@ -158,6 +164,13 @@ class BridgeClient:
         # Unreachable but makes type checkers happy
         raise TimeoutError("Bridge command failed")  # pragma: no cover
 
+    def _apply_curve_config(self, socket: zmq.asyncio.Socket) -> None:
+        """Apply CurveZMQ configuration to a socket if TLS is enabled."""
+        if self._tls_config and self._tls_config.get("enabled"):
+            socket.curve_publickey = self._tls_config["public_key"].encode()
+            socket.curve_secretkey = self._tls_config["secret_key"].encode()
+            socket.curve_serverkey = self._tls_config["server_key"].encode()
+
     async def _reconnect_cmd_socket(self) -> None:
         """Tear down and recreate the command socket."""
         if self._cmd_socket:
@@ -168,6 +181,7 @@ class BridgeClient:
         self._cmd_socket.setsockopt(zmq.RCVTIMEO, self._timeout_ms)
         self._cmd_socket.setsockopt(zmq.SNDTIMEO, self._timeout_ms)
         self._cmd_socket.setsockopt(zmq.LINGER, 0)
+        self._apply_curve_config(self._cmd_socket)
         self._cmd_socket.connect(self._command_url)
         self._status = BridgeStatus.CONNECTED
 

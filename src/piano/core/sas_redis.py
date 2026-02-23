@@ -20,6 +20,8 @@ from piano.core.sas import SharedAgentState
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+
+    from piano.config.settings import RedisSettings
 from piano.core.types import (
     ActionHistoryEntry,
     AgentId,
@@ -55,6 +57,29 @@ class RedisSAS(SharedAgentState):
         self._redis = redis
         self._agent_id = agent_id
         self._healthy = True
+
+    @classmethod
+    def create_with_settings(cls, settings: RedisSettings, agent_id: AgentId) -> RedisSAS:
+        """Create RedisSAS with settings including TLS."""
+        import redis.asyncio as aioredis
+
+        kwargs: dict[str, Any] = {
+            "host": settings.host,
+            "port": settings.port,
+            "db": settings.db,
+            "password": settings.password,
+        }
+        if settings.ssl_enabled:
+            kwargs["ssl"] = True
+            if settings.ssl_ca_certs:
+                kwargs["ssl_ca_certs"] = settings.ssl_ca_certs
+            if settings.ssl_certfile:
+                kwargs["ssl_certfile"] = settings.ssl_certfile
+            if settings.ssl_keyfile:
+                kwargs["ssl_keyfile"] = settings.ssl_keyfile
+
+        client = aioredis.Redis(**kwargs)
+        return cls(redis=client, agent_id=agent_id)
 
     # --- Key helpers ---
 
