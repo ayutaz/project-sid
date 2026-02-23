@@ -1,28 +1,8 @@
 # 7. 目標・計画システム実装設計
 
-[トップ](../index.md) | [PIANOアーキテクチャ](../02-piano-architecture.md) | [単一エージェント](../03-single-agent.md) | [文明的進化](../05-civilization.md)
-
----
-
-## 概要
-
-本ドキュメントは、PIANOアーキテクチャにおける**目標生成（Goal Generation）**、**計画（Planning）**、**行動認識（Action Awareness）**、**自己省察（Self-Reflection）**の4モジュールの再現実装設計を記述する。これらのモジュールは、エージェントが「何をすべきか」を決定し、「どう実行するか」を計画し、「正しく実行できたか」を検証し、「次にどう改善するか」を学習する認知ループを構成する。
-
-### モジュール間の関係
-
-```
-[環境観察] ──→ [行動認識（高速）] ──→ [共有エージェント状態]
-                    ↑                          ↓
-              [スキル実行]              [目標生成（低速）]
-                    ↑                          ↓
-              [認知コントローラ] ←── [計画（低速）]
-                    ↑
-              [自己省察（低速）]
-```
-
-**実行速度の区分**:
-- **高速（Fast）**: 行動認識 -- 非LLMニューラルネット、5秒以内で応答
-- **低速（Slow）**: 目標生成、計画、自己省察 -- LLMベース、数秒〜数十秒
+> 概要: 目標生成、計画、行動認識、自己省察の4モジュールによる認知ループの実装設計
+> 対応論文セクション: 3.1 (Cognitive Controller), Appendix B (Planning & Reflection)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1381,5 +1361,7 @@ interface SharedAgentState {
 - **Graphiti**: リアルタイム知識グラフ構築フレームワーク. [GitHub](https://github.com/getzep/graphiti)
 
 ---
-
-[トップ](../index.md) | [PIANOアーキテクチャ](../02-piano-architecture.md)
+## 関連ドキュメント
+- [05-minecraft-platform.md](./05-minecraft-platform.md) — Minecraft基盤技術
+- [06-social-cognition.md](./06-social-cognition.md) — 社会認知モジュール
+- [08-infrastructure.md](./08-infrastructure.md) — インフラ設計

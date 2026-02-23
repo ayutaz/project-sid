@@ -1,12 +1,8 @@
 # 01. システムアーキテクチャ設計 - PIANO再現実装
 
-## サマリー
-
-本ドキュメントは、Project Sid論文で提案されたPIANO（Parallel Information Aggregation via Neural Orchestration）アーキテクチャの再現実装に向けたシステムアーキテクチャ設計を記述する。PIANOの核心である「並行性」と「一貫性」の2つの課題を解決するために、共有エージェント状態を中心とした並列モジュール実行基盤と、認知コントローラ（CC）によるGlobal Workspace型のボトルネック+ブロードキャスト制御を設計する。
-
-**技術選定**: Python 3.12+ / asyncio を主軸に、Redis を共有状態ストアとして採用し、Ray による分散実行でスケーラビリティを確保する。
-
-**対応論文セクション**: Section 2 (PIANOアーキテクチャ)、Section 3 (単一エージェント)、Section 6 (研究手法)
+> 概要: PIANOの並行性と一貫性を実現する共有エージェント状態中心の並列モジュール実行基盤と、認知コントローラによるGlobal Workspace型制御の設計
+> 対応論文セクション: Section 2 (PIANOアーキテクチャ)、Section 3 (単一エージェント)、Section 6 (研究手法)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1339,4 +1335,8 @@ piano-reimpl/
 | **スケーラビリティ** | 単一エージェント | 単一エージェント | 単一エージェント | **10〜1000+ エージェント** |
 | **実装言語** | Java | Lisp/Python | Java/Tcl | **Python + TypeScript** |
 
-PIANOの独自性は、従来の認知アーキテクチャの設計パターン（特にGWTのボトルネック+ブロードキャスト）を採用しつつ、LLMを中核に据え、大規模マルチエージェント環境に対応した点にある。
+---
+## 関連ドキュメント
+- [02-llm-integration.md](./02-llm-integration.md) — LLM統合戦略
+- [03-cognitive-controller.md](./03-cognitive-controller.md) — 認知コントローラ
+- [04-memory-system.md](./04-memory-system.md) — 記憶システム

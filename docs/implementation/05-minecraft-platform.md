@@ -1,6 +1,8 @@
 # 5. Minecraft基盤技術調査
 
-[トップ](../index.md)
+> 概要: Mineflayer、マルチボット接続、スキル実行、環境インターフェースの技術分析と推奨アーキテクチャ
+> 対応論文セクション: 2.1 (Environmental Interaction), Appendix A (Technical Implementation)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1108,5 +1110,7 @@ Tier 6+ (最上級): ネザーアイテム、エンドアイテム ...
 - [Pufferfish Server](https://docs.pufferfish.host/)
 
 ---
-
-[トップ](../index.md)
+## 関連ドキュメント
+- [06-social-cognition.md](./06-social-cognition.md) — 社会認知モジュール
+- [07-goal-planning.md](./07-goal-planning.md) — 目標・計画システム
+- [08-infrastructure.md](./08-infrastructure.md) — インフラ設計

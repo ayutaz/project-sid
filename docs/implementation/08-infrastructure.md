@@ -1,6 +1,8 @@
 # 8. インフラストラクチャ・スケーリング設計
 
-[トップ](../index.md)
+> 概要: 大規模マルチエージェントシミュレーションのためのインフラ設計とスケーリング戦略
+> 対応論文セクション: 4.1 (Large-scale Simulation), Appendix C (Infrastructure Details)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1109,5 +1111,7 @@ services:
 - [Rate Limiting in AI Gateway: The Ultimate Guide](https://www.truefoundry.com/blog/rate-limiting-in-llm-gateway) - トークンベースレート制限
 
 ---
-
-[トップ](../index.md)
+## 関連ドキュメント
+- [05-minecraft-platform.md](./05-minecraft-platform.md) — Minecraft基盤技術
+- [06-social-cognition.md](./06-social-cognition.md) — 社会認知モジュール
+- [07-goal-planning.md](./07-goal-planning.md) — 目標・計画システム

@@ -1,6 +1,8 @@
 # 02. LLM統合戦略
 
-[トップ](../index.md) | [実装ドキュメント一覧](./README.md)
+> 概要: PIANOの並列モジュールに対応するLLM APIアブストラクション層、モジュール別プロンプト設計、モデル選択戦略、コスト最適化の実装方針
+> 対応論文セクション: Section 2 (PIANOアーキテクチャ)、Section 4 (モジュール詳細)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1072,5 +1074,7 @@ CCからの高レベル指示（例: "木を伐採"）
 | コスト超過 | 高 | リアルタイム監視、自動停止機構 |
 
 ---
-
-[トップ](../index.md)
+## 関連ドキュメント
+- [01-system-architecture.md](./01-system-architecture.md) — PIANO全体設計
+- [03-cognitive-controller.md](./03-cognitive-controller.md) — 認知コントローラ
+- [04-memory-system.md](./04-memory-system.md) — 記憶システム

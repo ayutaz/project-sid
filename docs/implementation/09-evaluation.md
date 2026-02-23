@@ -1,6 +1,8 @@
 # 09. 評価・ベンチマークシステム実装ガイド
 
-[トップ](../index.md) | [論文の評価分析](../08-evaluation.md)
+> 概要: AIエージェント社会の進歩を測定する4軸文明的ベンチマーク（専門化、統治、文化伝播、インフラ）とアイテム収集ベンチマークの実装ガイド
+> 対応論文セクション: Section 5（Evaluation）
+> 最終更新: 2026-02-23
 
 ---
 
@@ -2344,5 +2346,9 @@ class StatisticalPowerAnalysis:
 - REALM-Bench (2025). [arXiv:2502.18836](https://arxiv.org/abs/2502.18836)
 
 ---
+
+## 関連ドキュメント
+- [10-devops.md](./10-devops.md) — DevOps・運用
+- [roadmap.md](./roadmap.md) — 実装ロードマップ
 
 [トップ](../index.md) | [論文の評価分析](../08-evaluation.md)

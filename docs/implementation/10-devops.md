@@ -1,6 +1,8 @@
 # 10. DevOps・開発ワークフロー
 
-[← 実装ドキュメント](../index.md)
+> 概要: 大規模エージェントシミュレーションを支えるCI/CD、コンテナ化、モニタリング、実験管理の実装方針
+> 対応論文セクション: 実装全体の運用基盤（Section 3-5横断）
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1790,5 +1792,9 @@ sid debug profile --agent=agent-042 --duration=60
 - [Volcano Scheduler](https://volcano.sh/) - K8sバッチスケジューリング
 
 ---
+
+## 関連ドキュメント
+- [09-evaluation.md](./09-evaluation.md) — 評価・ベンチマーク
+- [roadmap.md](./roadmap.md) — 実装ロードマップ
 
 [← 実装ドキュメント](../index.md)

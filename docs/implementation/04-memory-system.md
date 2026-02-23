@@ -1,16 +1,12 @@
-# 4. 記憶システム設計
+# 04. 記憶システム設計
 
-[← 実装ドキュメント トップ](./index.md)
+> 概要: 作業記憶・短期記憶・長期記憶の三層構造を持つPIANO記憶モジュールの設計。Qdrant VectorDBを用いたセマンティック検索とステートレス並行処理の実装方針
+> 対応論文セクション: Section 4.3 (Memory Module)、Section 3.2 (三層記憶構造)
+> 最終更新: 2026-02-23
 
 ---
 
-## 4.1 概要
-
-PIANOアーキテクチャの記憶（Memory）モジュールは、エージェントの会話・行動・観察を保存・検索する中核コンポーネントである。ベースラインアーキテクチャにも含まれる基本モジュールであり、すべての上位認知モジュール（目標生成、社会認識、自己省察、計画）が記憶に依存する。
-
-論文では**作業記憶（WM）・短期記憶（STM）・長期記憶（LTM）**の三層構造が示されているが、具体的な時間パラメータや容量制限は明記されていない。本ドキュメントでは、論文の記述、認知科学の知見、先行研究（Generative Agents、MemGPT）を踏まえ、再現実装のための設計を提案する。
-
-### 設計原則
+## 4.1 設計原則
 
 1. **ステートレスモジュール設計**: PIANOの原則に従い、記憶モジュールは共有エージェント状態に対して読み書きするステートレスな操作として機能する
 2. **可変速度対応**: 高速な記憶検索（Action Awarenessへの応答）と低速な記憶統合（反省・圧縮）を並行処理
@@ -777,5 +773,7 @@ class MemoryModule:
 - Wang, Y. & Chen, X. (2025). "MIRIX: Multi-Agent Memory System for LLM-Based Agents." arXiv:2507.07957.
 
 ---
-
-[← 実装ドキュメント トップ](./index.md)
+## 関連ドキュメント
+- [01-system-architecture.md](./01-system-architecture.md) — PIANO全体設計
+- [02-llm-integration.md](./02-llm-integration.md) — LLM統合戦略
+- [03-cognitive-controller.md](./03-cognitive-controller.md) — 認知コントローラ

@@ -1,26 +1,8 @@
 # 6. 社会的認知モジュール実装設計
 
-[トップ](../index.md) | [PIANOアーキテクチャ](../02-piano-architecture.md) | [マルチエージェント](../04-multi-agent.md) | [文明的進化](../05-civilization.md)
-
----
-
-## 概要
-
-社会認識モジュール（Social Awareness Module / SAS: Social Awareness System）は、PIANOアーキテクチャにおいて**文明創発に不可欠**なモジュールである。除去すると他者の意図推測能力を完全喪失し、専門化が失敗し、社会的進化が停止する。本ドキュメントでは、論文の知見に基づく再現実装の設計方針を定義する。
-
-> **用語注記**: 論文原文では "Social Awareness System (SAS)" という用語が使用されている。本ドキュメントおよび実装では、PIANOアーキテクチャ内の1モジュールとしての位置づけを明確にするため「Social Awareness Module」の表記を併用する。両者は同一の概念を指す。
-
-### 論文における主要な定量結果
-
-| 指標 | 値 |
-|---|---|
-| 社会的認知精度（50体） | r = 0.807 |
-| 観察者閾値11での精度 | r = 0.907 |
-| モジュール除去時の精度 | r = 0.617 |
-| 回帰勾配（モジュールあり） | 0.373 |
-| 回帰勾配（モジュールなし） | 0.161 |
-| 好感度スケール | 0-10（離散） |
-| 社会目標生成頻度 | 5-10秒ごと |
+> 概要: 社会認識システム（SAS）の設計、他者意図推測、集合知、感情伝播の実装方針
+> 対応論文セクション: 3.2 (Social Awareness System), 4.3 (Emergent Civilization)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1587,5 +1569,7 @@ dynetx>=0.3             # 時系列グラフ
 - DyNetx Documentation: https://dynetx.readthedocs.io/
 
 ---
-
-[トップ](../index.md) | [PIANOアーキテクチャ](../02-piano-architecture.md) | [マルチエージェント](../04-multi-agent.md)
+## 関連ドキュメント
+- [05-minecraft-platform.md](./05-minecraft-platform.md) — Minecraft基盤技術
+- [07-goal-planning.md](./07-goal-planning.md) — 目標・計画システム
+- [08-infrastructure.md](./08-infrastructure.md) — インフラ設計

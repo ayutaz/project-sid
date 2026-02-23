@@ -1,6 +1,8 @@
 # 03. 認知コントローラ（Cognitive Controller）実装方針
 
-[トップ](../index.md) | [PIANOアーキテクチャ分析](../02-piano-architecture.md)
+> 概要: Global Workspace Theoryに基づく情報ボトルネック・ブロードキャスト機構の実装設計と既存認知アーキテクチャとの比較
+> 対応論文セクション: Section 2.2 (認知コントローラ)、Section 4.1 (CC実装詳細)
+> 最終更新: 2026-02-23
 
 ---
 
@@ -1420,4 +1422,9 @@ class SharedAgentState:
 
 - **Event-Driven Multi-Agent Systems**: [Four Design Patterns](https://www.confluent.io/blog/event-driven-multi-agent-systems/)
 - **AI Agent Orchestration Patterns**: [Azure Architecture Center](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns)
-- **Google Cloud Agentic AI Patterns**: [Architecture Center](https://docs.google.com/architecture/choose-design-pattern-agentic-ai-system)
+
+---
+## 関連ドキュメント
+- [01-system-architecture.md](./01-system-architecture.md) — PIANO全体設計
+- [02-llm-integration.md](./02-llm-integration.md) — LLM統合戦略
+- [04-memory-system.md](./04-memory-system.md) — 記憶システム
