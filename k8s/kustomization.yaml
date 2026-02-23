@@ -1,0 +1,35 @@
+# Project Sid - Kustomization
+# Assembles all Kubernetes resources for the PIANO system.
+#
+# Usage:
+#   kubectl apply -k k8s/                    # Apply all resources
+#   kubectl kustomize k8s/                   # Preview generated manifests
+#   kubectl apply -k k8s/overlays/prod/      # Apply with environment overlay
+#
+# For environment-specific overrides, create overlays:
+#   k8s/overlays/dev/kustomization.yaml
+#   k8s/overlays/staging/kustomization.yaml
+#   k8s/overlays/prod/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: project-sid
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/part-of: project-sid
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  # Namespace (must be first)
+  - namespace.yaml
+  # Configuration and secrets
+  - configmap.yaml
+  # Data layer
+  - redis-cluster.yaml
+  # Application layer
+  - agent-worker.yaml
+  - llm-gateway.yaml
+  - minecraft-shard.yaml
+  # Observability
+  - monitoring.yaml

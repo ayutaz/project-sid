@@ -1,0 +1,129 @@
+# Project Sid - ConfigMap
+# Central configuration for PianoSettings.
+# Maps to environment variables with PIANO_ prefix and __ nested delimiter.
+# Override per environment using kustomize overlays (dev/staging/prod).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: piano-config
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: piano-config
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: project-sid
+data:
+  # ============================================================
+  # Redis (SAS - Shared Agent State)
+  # ============================================================
+  # Connection host is set per-pod via env; these are common settings
+  redis.host: redis-cluster.project-sid.svc.cluster.local
+  redis.port: "6379"
+  redis.db: "0"
+
+  # ============================================================
+  # LLM Provider Settings
+  # ============================================================
+  # Default model for cognitive controller and general inference
+  llm.default_model: "gpt-4o-mini"
+  # Temperature: 0.0 = deterministic, higher = more creative
+  llm.temperature: "0.0"
+  # Maximum tokens per LLM response
+  llm.max_tokens: "1024"
+  # Cost guard: maximum USD spend before halting LLM calls
+  llm.cost_limit_usd: "100.0"
+  # Rate limit: max LLM API calls per minute across the system
+  llm.calls_per_minute_limit: "100"
+
+  # ============================================================
+  # ZMQ Bridge Settings
+  # ============================================================
+  # Bridge host points to Minecraft shard headless service
+  bridge.host: minecraft-shard-headless.project-sid.svc.cluster.local
+  bridge.command_port: "5555"
+  bridge.event_port: "5556"
+
+  # ============================================================
+  # Minecraft Server Settings
+  # ============================================================
+  minecraft.host: minecraft-proxy.project-sid.svc.cluster.local
+  minecraft.port: "25577"
+
+  # ============================================================
+  # Agent Settings
+  # ============================================================
+  # Default tick interval in milliseconds (per-agent execution loop)
+  agent.tick_interval_ms: "500"
+  # Cognitive Controller interval in milliseconds
+  agent.cc_interval_ms: "3000"
+
+  # ============================================================
+  # Scheduler (3-tier execution: FAST / MID / SLOW)
+  # ============================================================
+  # FAST tier runs every tick (e.g., 500ms)
+  scheduler.fast_tick_ms: "500"
+  # MID tier runs every N fast ticks (e.g., every 1.5s)
+  scheduler.mid_tick_multiplier: "3"
+  # SLOW tier runs every N fast ticks (e.g., every 5s)
+  scheduler.slow_tick_multiplier: "10"
+
+  # ============================================================
+  # Qdrant (Long-Term Memory vector store)
+  # ============================================================
+  qdrant.url: "http://qdrant.project-sid.svc.cluster.local:6333"
+  qdrant.collection_prefix: "ltm"
+  qdrant.embedding_dim: "1536"
+
+  # ============================================================
+  # Local LLM (optional: Ollama or vLLM for cost reduction)
+  # ============================================================
+  local_llm.provider: "ollama"
+  local_llm.url: "http://local-llm.project-sid.svc.cluster.local:11434"
+  local_llm.model: "llama3"
+  local_llm.timeout: "30.0"
+
+  # ============================================================
+  # Checkpoint (agent state persistence)
+  # ============================================================
+  checkpoint.dir: "/data/checkpoints"
+  checkpoint.max_count: "10"
+  checkpoint.interval_seconds: "300.0"
+
+  # ============================================================
+  # Memory Consolidation (STM -> LTM)
+  # ============================================================
+  consolidation.batch_size: "10"
+  consolidation.min_importance: "0.3"
+
+  # ============================================================
+  # Logging
+  # ============================================================
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  log.level: "INFO"
+  # Log format: json (structured) or text (human-readable)
+  log.format: "json"
+---
+# Secret placeholder: NEVER commit real values.
+# Populate via: kubectl create secret generic piano-secrets --from-literal=...
+# or via sealed-secrets / external-secrets-operator in production.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: piano-secrets
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: piano-secrets
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: project-sid
+type: Opaque
+stringData:
+  # LLM API key used by agent-workers (via LiteLLM)
+  llm-api-key: "PLACEHOLDER_REPLACE_ME"
+  # OpenAI API key for LLM gateway
+  openai-api-key: "PLACEHOLDER_REPLACE_ME"
+  # Anthropic API key for LLM gateway (optional)
+  anthropic-api-key: "PLACEHOLDER_REPLACE_ME"
+  # Redis password (if auth is enabled)
+  redis-password: "PLACEHOLDER_REPLACE_ME"
+  # Grafana admin password
+  grafana-admin-password: "PLACEHOLDER_REPLACE_ME"

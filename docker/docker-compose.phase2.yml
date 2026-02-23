@@ -1,0 +1,186 @@
+# Docker Compose Phase 2: Full PIANO development environment with monitoring
+# Usage: docker compose -f docker/docker-compose.phase2.yml up -d
+#
+# Includes:
+#   - Redis 7 (cache, pub/sub, shared state)
+#   - PostgreSQL 16 (agent state, memory, experiment results)
+#   - Pufferfish MC Server
+#   - Velocity Proxy
+#   - Qdrant (vector DB)
+#   - Prometheus (metrics)
+#   - Grafana (dashboards)
+#   - Loki (log aggregation)
+
+services:
+  # ===== Core Infrastructure =====
+
+  # --- Redis: Cache, Pub/Sub, Shared State ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- PostgreSQL: Agent State, Memory, Experiment Results ---
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: piano
+      POSTGRES_USER: piano
+      POSTGRES_PASSWORD: piano_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U piano -d piano"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- Qdrant: Vector Database for Embeddings ---
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # ===== Minecraft =====
+
+  # --- Pufferfish: MC Server ---
+  minecraft:
+    image: itzg/minecraft-server
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: "TRUE"
+      TYPE: PUFFERFISH
+      VERSION: "1.20.4"
+      ONLINE_MODE: "FALSE"
+      MAX_PLAYERS: 100
+      VIEW_DISTANCE: 8
+      MEMORY: 2G
+    volumes:
+      - mc_data:/data
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - piano_network
+
+  # --- Velocity: Proxy for MC Server ---
+  velocity:
+    image: itzg/bungeecord
+    ports:
+      - "25577:25577"
+    environment:
+      TYPE: VELOCITY
+      VELOCITY_VERSION: LATEST
+      ONLINE_MODE: "FALSE"
+    volumes:
+      - velocity_data:/server
+    depends_on:
+      minecraft:
+        condition: service_healthy
+    networks:
+      - piano_network
+
+  # ===== Monitoring Stack =====
+
+  # --- Prometheus: Metrics Collection ---
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- Loki: Log Aggregation ---
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+  # --- Grafana: Dashboards & Visualization ---
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piano_network
+
+networks:
+  piano_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
+  mc_data:
+  qdrant_data:
+  velocity_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:

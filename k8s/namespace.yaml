@@ -1,0 +1,9 @@
+# Project Sid - Namespace
+# All PIANO system resources are deployed into this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: project-sid
+  labels:
+    app.kubernetes.io/part-of: project-sid
+    app.kubernetes.io/managed-by: kustomize

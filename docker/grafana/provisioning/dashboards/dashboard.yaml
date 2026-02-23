@@ -1,0 +1,16 @@
+# Grafana dashboard provisioning
+# Docs: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+apiVersion: 1
+
+providers:
+  - name: "PIANO Dashboards"
+    orgId: 1
+    folder: "PIANO"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

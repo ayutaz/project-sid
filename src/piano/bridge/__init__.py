@@ -11,6 +11,13 @@ from piano.bridge.protocol import (
     WorldQuery,
 )
 from piano.bridge.types import BridgeStatus
+from piano.bridge.velocity import (
+    LoadBalanceStrategy,
+    ServerConfig,
+    ServerLoad,
+    VelocityConfig,
+    VelocityProxyManager,
+)
 
 __all__ = [
     "BatchCommand",
@@ -20,6 +27,11 @@ __all__ = [
     "CommandValidator",
     "EventFilter",
     "EventType",
+    "LoadBalanceStrategy",
     "ProtocolSerializer",
+    "ServerConfig",
+    "ServerLoad",
+    "VelocityConfig",
+    "VelocityProxyManager",
     "WorldQuery",
 ]

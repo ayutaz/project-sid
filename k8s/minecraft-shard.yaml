@@ -1,0 +1,232 @@
+# Project Sid - Minecraft Shard
+# StatefulSet for Minecraft (Pufferfish) game servers with Velocity proxy sidecar.
+# Each shard hosts a portion of the AI agent population.
+# Persistent volumes store world data.
+---
+# Headless Service for StatefulSet DNS resolution
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-shard-headless
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: minecraft-shard
+    app.kubernetes.io/component: gameserver
+    app.kubernetes.io/part-of: project-sid
+spec:
+  clusterIP: None
+  ports:
+    - name: minecraft
+      port: 25565
+      targetPort: minecraft
+    - name: zmq-cmd
+      port: 5555
+      targetPort: zmq-cmd
+    - name: zmq-event
+      port: 5556
+      targetPort: zmq-event
+  selector:
+    app.kubernetes.io/name: minecraft-shard
+---
+# ClusterIP Service for Velocity proxy access
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-proxy
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: minecraft-shard
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/part-of: project-sid
+spec:
+  type: ClusterIP
+  ports:
+    - name: proxy
+      port: 25577
+      targetPort: velocity
+  selector:
+    app.kubernetes.io/name: minecraft-shard
+---
+# ConfigMap for Velocity proxy forwarding configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velocity-config
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: minecraft-shard
+    app.kubernetes.io/part-of: project-sid
+data:
+  # Velocity forwarding secret shared between proxy and backend servers
+  forwarding.secret: "PLACEHOLDER_CHANGE_ME"
+  velocity.toml: |
+    # Velocity proxy configuration
+    config-version = "2.7"
+    bind = "0.0.0.0:25577"
+    motd = "Project Sid - AI Civilization"
+    player-info-forwarding-mode = "modern"
+
+    [servers]
+    # Backend servers are auto-discovered via headless service DNS
+    shard-0 = "minecraft-shard-0.minecraft-shard-headless.project-sid.svc.cluster.local:25565"
+    shard-1 = "minecraft-shard-1.minecraft-shard-headless.project-sid.svc.cluster.local:25565"
+    shard-2 = "minecraft-shard-2.minecraft-shard-headless.project-sid.svc.cluster.local:25565"
+    try = ["shard-0"]
+
+    [forced-hosts]
+
+    [advanced]
+    compression-threshold = 256
+    compression-level = -1
+    login-ratelimit = 3000
+    connection-timeout = 5000
+    read-timeout = 30000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minecraft-shard
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: minecraft-shard
+    app.kubernetes.io/component: gameserver
+    app.kubernetes.io/part-of: project-sid
+spec:
+  serviceName: minecraft-shard-headless
+  replicas: 3  # Start with 3 shards; scale to 6 as needed
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minecraft-shard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minecraft-shard
+        app.kubernetes.io/component: gameserver
+        app.kubernetes.io/part-of: project-sid
+    spec:
+      # Schedule on agent pool nodes (high memory for MC)
+      nodeSelector:
+        pool: agent
+      terminationGracePeriodSeconds: 120  # Allow time for graceful world save
+      containers:
+        # --- Minecraft (Pufferfish) Server ---
+        - name: minecraft
+          image: itzg/minecraft-server
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          env:
+            - name: EULA
+              value: "TRUE"
+            - name: TYPE
+              value: PUFFERFISH
+            - name: VERSION
+              value: "1.20.4"
+            - name: ONLINE_MODE
+              value: "FALSE"
+            - name: MAX_PLAYERS
+              value: "100"
+            - name: VIEW_DISTANCE
+              value: "8"
+            - name: MEMORY
+              value: "4G"
+            # Enable Velocity modern forwarding
+            - name: PROXY_TYPE
+              value: VELOCITY
+            - name: VELOCITY_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: velocity-config
+                  key: forwarding.secret
+          ports:
+            - name: minecraft
+              containerPort: 25565
+          volumeMounts:
+            - name: world-data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["mc-health"]
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["mc-health"]
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+
+        # --- ZMQ Bridge (Mineflayer bot) ---
+        - name: bridge
+          image: project-sid/mineflayer-bridge:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          env:
+            # Connect to the local MC server (same pod via localhost)
+            - name: MC_HOST
+              value: "localhost"
+            - name: MC_PORT
+              value: "25565"
+            - name: ZMQ_CMD_PORT
+              value: "5555"
+            - name: ZMQ_EVENT_PORT
+              value: "5556"
+          ports:
+            - name: zmq-cmd
+              containerPort: 5555
+            - name: zmq-event
+              containerPort: 5556
+
+        # --- Velocity Proxy Sidecar ---
+        - name: velocity
+          image: itzg/bungeecord:latest
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          env:
+            - name: TYPE
+              value: VELOCITY
+            - name: MEMORY
+              value: "512M"
+          ports:
+            - name: velocity
+              containerPort: 25577
+          volumeMounts:
+            - name: velocity-config-vol
+              mountPath: /server/velocity.toml
+              subPath: velocity.toml
+              readOnly: true
+      volumes:
+        - name: velocity-config-vol
+          configMap:
+            name: velocity-config
+            items:
+              - key: velocity.toml
+                path: velocity.toml
+  volumeClaimTemplates:
+    - metadata:
+        name: world-data
+        labels:
+          app.kubernetes.io/name: minecraft-shard
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

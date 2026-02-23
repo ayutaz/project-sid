@@ -1,0 +1,181 @@
+# Project Sid - Agent Worker
+# Deployment for PIANO agent workers. Each pod runs one or more AI agent instances.
+# HPA scales from 4 to 16 replicas based on CPU utilization.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-worker
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: agent-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: project-sid
+spec:
+  replicas: 4  # Initial replica count; HPA manages scaling
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-worker
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: project-sid
+    spec:
+      # Schedule on agent pool nodes (higher compute)
+      nodeSelector:
+        pool: agent
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: agent-worker
+          image: project-sid/agent-worker:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          env:
+            # --- Redis (SAS) ---
+            - name: PIANO_REDIS__HOST
+              value: redis-cluster.project-sid.svc.cluster.local
+            - name: PIANO_REDIS__PORT
+              value: "6379"
+            - name: PIANO_REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
+                  optional: true
+            # --- Qdrant (LTM vector store) ---
+            - name: PIANO_QDRANT__URL
+              value: http://qdrant.project-sid.svc.cluster.local:6333
+            # --- LLM Gateway ---
+            - name: PIANO_LLM__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: llm-api-key
+            # --- Bridge (ZMQ) ---
+            - name: PIANO_BRIDGE__HOST
+              value: minecraft-shard-headless.project-sid.svc.cluster.local
+            # --- Scheduler tick settings ---
+            - name: PIANO_SCHEDULER__FAST_TICK_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: scheduler.fast_tick_ms
+            - name: PIANO_SCHEDULER__MID_TICK_MULTIPLIER
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: scheduler.mid_tick_multiplier
+            - name: PIANO_SCHEDULER__SLOW_TICK_MULTIPLIER
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: scheduler.slow_tick_multiplier
+            # --- Logging ---
+            - name: PIANO_LOG__LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: log.level
+            - name: PIANO_LOG__FORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: log.format
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          ports:
+            - name: health
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+---
+# Service for agent-worker health/metrics endpoints
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-worker
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: agent-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: project-sid
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: /metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: health
+      port: 8080
+      targetPort: health
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: agent-worker
+---
+# HPA: scale agent-workers between 4 and 16 replicas based on CPU
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-worker-hpa
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: agent-worker
+    app.kubernetes.io/part-of: project-sid
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-worker
+  minReplicas: 4
+  maxReplicas: 16
+  metrics:
+    # Scale up when average CPU exceeds 70%
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Scale up when average memory exceeds 80%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

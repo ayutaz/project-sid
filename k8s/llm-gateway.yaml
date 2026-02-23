@@ -1,0 +1,185 @@
+# Project Sid - LLM Gateway
+# Deployment for the LLM proxy/gateway layer. Handles rate limiting,
+# cost tracking, and multi-provider routing (OpenAI, Anthropic, etc.).
+# HPA scales from 2 to 8 replicas based on CPU utilization.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-gateway
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: project-sid
+spec:
+  replicas: 2  # Initial replica count; HPA manages scaling
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-gateway
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/part-of: project-sid
+    spec:
+      # Schedule on general pool nodes
+      nodeSelector:
+        pool: general
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: llm-gateway
+          image: project-sid/llm-gateway:latest
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          env:
+            # --- LLM Provider API Keys (from Secret) ---
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: openai-api-key
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: anthropic-api-key
+                  optional: true
+            # --- LLM Configuration ---
+            - name: PIANO_LLM__DEFAULT_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: llm.default_model
+            - name: PIANO_LLM__TEMPERATURE
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: llm.temperature
+            - name: PIANO_LLM__MAX_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: llm.max_tokens
+            - name: PIANO_LLM__COST_LIMIT_USD
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: llm.cost_limit_usd
+            - name: PIANO_LLM__CALLS_PER_MINUTE_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: llm.calls_per_minute_limit
+            # --- Redis (for rate limit counters) ---
+            - name: PIANO_REDIS__HOST
+              value: redis-cluster.project-sid.svc.cluster.local
+            - name: PIANO_REDIS__PORT
+              value: "6379"
+            - name: PIANO_REDIS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
+                  optional: true
+            # --- Logging ---
+            - name: PIANO_LOG__LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: log.level
+            - name: PIANO_LOG__FORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: piano-config
+                  key: log.format
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 9090
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+# Service for LLM gateway (internal access by agent-workers)
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-gateway
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: project-sid
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: /metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: llm-gateway
+---
+# HPA: scale LLM gateway between 2 and 8 replicas based on CPU
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llm-gateway-hpa
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/part-of: project-sid
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llm-gateway
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    # Scale up when average CPU exceeds 60% (LLM requests are I/O heavy)
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
