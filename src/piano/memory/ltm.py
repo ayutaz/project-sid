@@ -297,6 +297,11 @@ class QdrantLTMStore:
             )
         except Exception:
             # Collection doesn't exist or other error
+            logger.warning(
+                "ltm_retrieve_error",
+                agent_id=agent_id,
+                entry_id=str(entry_id),
+            )
             return None
 
     async def search(

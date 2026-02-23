@@ -430,3 +430,71 @@ class TestCheckpointManager:
         assert len(stm) == 2
         assert stm[0].content == "memory2"  # Newest first
         assert stm[1].content == "memory1"
+
+
+class TestCheckpointPathTraversal:
+    """Security tests for path traversal prevention in CheckpointManager."""
+
+    async def test_path_traversal_rejected(self, tmp_path: Path):
+        """Test that agent_id containing '../' is rejected with ValueError."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        traversal_ids = [
+            "../etc/passwd",
+            "..\\windows\\system32",
+            "agent/../../../etc/shadow",
+            "..",
+            "../",
+        ]
+        for bad_id in traversal_ids:
+            with pytest.raises(ValueError, match="Invalid agent_id"):
+                await manager.save(bad_id, sas, tick_count=1)
+
+            with pytest.raises(ValueError, match="Invalid agent_id"):
+                await manager.restore(bad_id, sas)
+
+            with pytest.raises(ValueError, match="Invalid agent_id"):
+                manager.list_checkpoints(bad_id)
+
+    async def test_invalid_agent_id_rejected(self, tmp_path: Path):
+        """Test that agent_id with special characters is rejected."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        invalid_ids = [
+            "agent 001",      # space
+            "agent/001",      # forward slash
+            "agent\\001",     # backslash
+            "agent.001",      # dot
+            "agent@001",      # at sign
+            "agent:001",      # colon
+            "",               # empty string
+            "agent\x00id",   # null byte
+        ]
+        for bad_id in invalid_ids:
+            with pytest.raises(ValueError, match="Invalid agent_id"):
+                await manager.save(bad_id, sas, tick_count=1)
+
+    async def test_valid_agent_id_accepted(self, tmp_path: Path):
+        """Test that valid agent_ids are accepted without error."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        valid_ids = [
+            "agent-001",
+            "agent_test",
+            "Agent123",
+            "a",
+            "ABC",
+            "test-agent-with-long-name-123",
+            "UPPER_lower_123-mix",
+        ]
+        for valid_id in valid_ids:
+            # Should not raise - just verify save completes
+            metadata = await manager.save(valid_id, sas, tick_count=1)
+            assert metadata.agent_id == valid_id
+
+            # list_checkpoints should also work
+            checkpoints = manager.list_checkpoints(valid_id)
+            assert len(checkpoints) >= 1

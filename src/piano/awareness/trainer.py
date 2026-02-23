@@ -19,7 +19,7 @@ __all__ = [
 
 import random
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol
 
 import numpy as np
@@ -62,7 +62,7 @@ class TrainingExample(BaseModel):
     state_vector: list[float] = Field(description="Encoded agent state")
     action_vector: list[float] = Field(description="Encoded action representation")
     outcome_vector: list[float] = Field(description="Encoded actual outcome")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     weight: float = Field(default=1.0, ge=0.0, description="Sample weight for training")
 
     def to_input(self) -> np.ndarray:

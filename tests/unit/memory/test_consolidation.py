@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 from piano.core.types import LLMRequest, LLMResponse, MemoryEntry, ModuleTier
 from piano.memory.consolidation import (
     ConsolidationPolicy,
     MemoryConsolidationModule,
 )
+from piano.memory.ltm import LTMEntry
 
 from .conftest import InMemorySAS
 
@@ -35,14 +40,47 @@ def _entry(
 
 
 class MockLTMStore:
-    """Mock LTM store for testing."""
+    """Mock LTM store for testing.
+
+    Implements the canonical LTMStore protocol from piano.memory.ltm.
+    """
 
     def __init__(self) -> None:
-        self.stored_entries: list[MemoryEntry] = []
+        self.stored_entries: list[LTMEntry] = []
+        self.stored_agent_ids: list[str] = []
 
-    async def store(self, entry: MemoryEntry) -> None:
+    async def initialize(self) -> None:
+        pass
+
+    async def shutdown(self) -> None:
+        pass
+
+    async def store(self, agent_id: str, entry: LTMEntry) -> UUID:
         """Store a memory entry."""
         self.stored_entries.append(entry)
+        self.stored_agent_ids.append(agent_id)
+        return entry.id
+
+    async def retrieve(self, agent_id: str, entry_id: UUID) -> LTMEntry | None:
+        for e in self.stored_entries:
+            if e.id == entry_id:
+                return e
+        return None
+
+    async def search(
+        self,
+        agent_id: str,
+        query_embedding: list[float],
+        limit: int = 10,
+        min_score: float = 0.0,
+    ) -> list[LTMEntry]:
+        return []
+
+    async def delete(self, agent_id: str, entry_id: UUID) -> bool:
+        return False
+
+    async def get_stats(self, agent_id: str) -> dict[str, float | int]:
+        return {"count": len(self.stored_entries), "avg_importance": 0.0, "total_accesses": 0}
 
 
 class MockLLMProvider:
@@ -96,6 +134,8 @@ class TestConsolidationBasic:
         assert "high1" in contents
         assert "high2" in contents
         assert "low" not in contents
+        # Verify agent_id was passed
+        assert all(aid == sas.agent_id for aid in ltm_store.stored_agent_ids)
 
     @pytest.mark.asyncio
     async def test_entries_below_min_importance_skipped(self) -> None:
@@ -235,11 +275,12 @@ class TestConsolidationSummarization:
         assert result.data["summaries_created"] == 1
         # LLM should have been called
         assert len(llm.requests) == 1
-        # Summary entry should be stored
+        # Summary entry should be stored as LTMEntry
         summaries = [e for e in ltm_store.stored_entries if e.category == "reflection"]
         assert len(summaries) == 1
         assert summaries[0].content == "Agent cooperated with Lila on mining tasks"
-        assert summaries[0].metadata.get("is_summary") is True
+        # LTMEntry has embedding field (from _memory_to_ltm conversion)
+        assert summaries[0].embedding is not None
 
     @pytest.mark.asyncio
     async def test_no_summarization_without_llm(self) -> None:
@@ -324,7 +365,7 @@ class TestConsolidationResult:
 class TestEmbeddingPlaceholder:
     @pytest.mark.asyncio
     async def test_embedding_placeholder_added(self) -> None:
-        """Consolidated entries should have embedding placeholders."""
+        """Consolidated entries should have embedding in the LTMEntry."""
         sas = InMemorySAS()
         ltm_store = MockLTMStore()
         policy = ConsolidationPolicy(
@@ -342,9 +383,11 @@ class TestEmbeddingPlaceholder:
         assert result.success
         assert len(ltm_store.stored_entries) == 1
         entry = ltm_store.stored_entries[0]
-        assert "embedding" in entry.metadata
-        assert isinstance(entry.metadata["embedding"], list)
-        assert len(entry.metadata["embedding"]) == 1536  # text-embedding-3-small dim
+        # LTMEntry now has embedding field directly
+        assert isinstance(entry, LTMEntry)
+        assert entry.embedding is not None
+        assert isinstance(entry.embedding, list)
+        assert len(entry.embedding) == 1536  # text-embedding-3-small dim
 
 
 # --- Module lifecycle tests ---
@@ -441,7 +484,7 @@ class TestConsolidationEdgeCases:
         """Module should handle errors gracefully."""
 
         class FailingLTMStore:
-            async def store(self, entry: MemoryEntry) -> None:
+            async def store(self, agent_id: str, entry: LTMEntry) -> UUID:
                 raise RuntimeError("Storage error")
 
         sas = InMemorySAS()

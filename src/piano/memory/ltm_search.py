@@ -15,13 +15,12 @@ from __future__ import annotations
 __all__ = [
     "ForgettingCurve",
     "LTMRetrievalModule",
-    "LTMStore",
     "RetrievalQuery",
 ]
 
 import math
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -30,6 +29,7 @@ from piano.core.types import MemoryEntry, ModuleResult, ModuleTier
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
+    from piano.memory.ltm import LTMEntry, LTMStore
 
 
 class RetrievalQuery(BaseModel):
@@ -39,34 +39,6 @@ class RetrievalQuery(BaseModel):
     category_filter: str | None = None
     min_importance: float = 0.0
     max_results: int = 10
-
-
-class LTMStore(Protocol):
-    """Protocol for a long-term memory store that supports search.
-
-    This allows the LTMRetrievalModule to work with any backend that
-    implements this interface (e.g., Qdrant, Chroma, mock stores).
-    """
-
-    async def search(
-        self,
-        query_text: str,
-        category_filter: str | None = None,
-        min_importance: float = 0.0,
-        max_results: int = 10,
-    ) -> list[MemoryEntry]:
-        """Search for memories matching the query.
-
-        Args:
-            query_text: The search query string.
-            category_filter: Optional category to filter by.
-            min_importance: Minimum importance threshold.
-            max_results: Maximum number of results to return.
-
-        Returns:
-            List of matching MemoryEntry objects.
-        """
-        ...
 
 
 class ForgettingCurve:
@@ -171,16 +143,26 @@ class LTMRetrievalModule(Module):
                     data={"queries": 0, "retrieved": 0, "injected": 0},
                 )
 
-            # 2. Execute queries and collect results
+            agent_id = sas.agent_id
+
+            # 2. Execute queries and collect results (converted to MemoryEntry)
             all_results: list[MemoryEntry] = []
             for query in queries:
-                results = await self._store.search(
-                    query_text=query.query_text,
-                    category_filter=query.category_filter,
-                    min_importance=query.min_importance,
-                    max_results=query.max_results,
+                query_embedding = self._text_to_embedding_placeholder(query.query_text)
+                ltm_results: list[LTMEntry] = await self._store.search(
+                    agent_id,
+                    query_embedding,
+                    limit=query.max_results,
+                    min_score=query.min_importance,
                 )
-                all_results.extend(results)
+                # Convert LTMEntry -> MemoryEntry and apply category filter
+                for ltm_entry in ltm_results:
+                    if (
+                        query.category_filter is not None
+                        and ltm_entry.category != query.category_filter
+                    ):
+                        continue
+                    all_results.append(self._ltm_to_memory(ltm_entry))
 
             # 3. Apply forgetting curve to filter out low-retention memories
             retained = self._apply_forgetting(all_results)
@@ -312,3 +294,49 @@ class LTMRetrievalModule(Module):
                 retained.append(entry)
 
         return retained
+
+    @staticmethod
+    def _ltm_to_memory(ltm_entry: LTMEntry) -> MemoryEntry:
+        """Convert an LTMEntry to a MemoryEntry for use in working memory.
+
+        Args:
+            ltm_entry: The LTMEntry to convert.
+
+        Returns:
+            A MemoryEntry with the same content and metadata.
+        """
+        return MemoryEntry(
+            id=ltm_entry.id,
+            timestamp=ltm_entry.timestamp,
+            content=ltm_entry.content,
+            category=ltm_entry.category,
+            importance=ltm_entry.importance,
+            source_module=ltm_entry.source_module,
+            metadata=dict(ltm_entry.metadata),
+        )
+
+    @staticmethod
+    def _text_to_embedding_placeholder(text: str) -> list[float]:
+        """Convert text to a placeholder embedding vector.
+
+        In production, this would call an embedding model (e.g., OpenAI
+        text-embedding-3-small). For now, returns a simple hash-based vector.
+
+        Args:
+            text: The text to embed.
+
+        Returns:
+            A placeholder embedding vector of dimension 384 (MiniLM default).
+        """
+        # Simple hash-based placeholder: deterministic but not semantically meaningful
+        # In production, replace with actual embedding model call
+        import hashlib
+
+        h = hashlib.sha256(text.encode()).digest()
+        # Use hash bytes to seed a simple vector
+        vec = [float(b) / 255.0 for b in h]
+        # Pad or truncate to 384 dimensions
+        dim = 384
+        if len(vec) < dim:
+            vec = vec * (dim // len(vec) + 1)
+        return vec[:dim]

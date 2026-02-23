@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import BaseModel, Field
 
+from piano.cc.compression import sanitize_text
 from piano.core.module import Module
 from piano.core.types import CCDecision, LLMRequest, ModuleResult, ModuleTier
 
@@ -65,6 +66,7 @@ class TalkingModule(Module):
         self,
         llm_provider: LLMProvider,
         personality_traits: dict[str, float] | None = None,
+        sas: SharedAgentState | None = None,
     ) -> None:
         """Initialize the Talking module.
 
@@ -72,9 +74,14 @@ class TalkingModule(Module):
             llm_provider: LLM provider for generating utterances.
             personality_traits: Big Five personality traits (0.0-1.0 each).
                                Defaults to neutral (0.5) if not provided.
+            sas: Optional SAS reference for on_broadcast access.
+                 Module ABC's on_broadcast(decision) does not receive SAS,
+                 so we store a reference here to enable utterance generation
+                 and storage from broadcast handlers.
         """
         self._llm = llm_provider
         self._personality = personality_traits or dict(DEFAULT_PERSONALITY)
+        self._sas = sas
 
     @property
     def name(self) -> str:
@@ -123,12 +130,18 @@ class TalkingModule(Module):
             logger.debug("on_broadcast: no speaking directive, skipping")
             return
 
+        if self._sas is None:
+            logger.warning(
+                "on_broadcast: speaking directive received but no SAS reference; "
+                "pass sas= to TalkingModule constructor to enable utterance generation",
+                speaking=decision.speaking,
+            )
+            return
+
         logger.info("on_broadcast: generating utterance", speaking=decision.speaking)
 
-        # Note: We can't access SAS here directly since on_broadcast doesn't receive it.
-        # In a real implementation, we'd need to store a reference to SAS or pass it.
-        # For now, we'll log that we would generate an utterance.
-        # This will be handled properly in the integration tests where SAS is available.
+        utterance = await self._generate_utterance(decision, self._sas)
+        await self._store_utterance(self._sas, utterance)
 
     async def _generate_utterance(
         self,
@@ -185,9 +198,7 @@ class TalkingModule(Module):
             # Return empty utterance on error
             return Utterance(content="", tone="neutral")
 
-    async def _build_conversation_context(
-        self, sas: SharedAgentState
-    ) -> ConversationContext:
+    async def _build_conversation_context(self, sas: SharedAgentState) -> ConversationContext:
         """Build conversation context from SAS.
 
         Args:
@@ -203,10 +214,12 @@ class TalkingModule(Module):
         # Extract recent chat messages (last 5)
         recent_messages = []
         for msg in percepts.chat_messages[-5:]:
-            recent_messages.append({
-                "speaker": msg.get("username", "unknown"),
-                "message": msg.get("message", ""),
-            })
+            recent_messages.append(
+                {
+                    "speaker": msg.get("username", "unknown"),
+                    "message": msg.get("message", ""),
+                }
+            )
 
         # Determine current topic (simplified: last message content)
         current_topic = ""
@@ -262,18 +275,19 @@ Output only the speech content, no extra formatting."""
         """
         sections = []
 
-        # CC speaking directive
-        sections.append(f"## Speaking Directive\n{decision.speaking}")
+        # CC speaking directive (sanitized to prevent prompt injection)
+        safe_speaking = sanitize_text(decision.speaking or "", max_length=500)
+        sections.append(f"## Speaking Directive\n{safe_speaking}")
 
-        # CC reasoning
+        # CC reasoning (sanitized to prevent prompt injection)
         if decision.reasoning:
-            sections.append(f"## Context\n{decision.reasoning}")
+            safe_reasoning = sanitize_text(decision.reasoning, max_length=500)
+            sections.append(f"## Context\n{safe_reasoning}")
 
         # Conversation history
         if context.recent_messages:
             history = "\n".join(
-                f"- {msg['speaker']}: {msg['message']}"
-                for msg in context.recent_messages
+                f"- {msg['speaker']}: {msg['message']}" for msg in context.recent_messages
             )
             sections.append(f"## Recent Conversation\n{history}")
 
@@ -281,9 +295,7 @@ Output only the speech content, no extra formatting."""
         if context.current_topic:
             sections.append(f"## Current Topic\n{context.current_topic}")
 
-        sections.append(
-            "\nGenerate an appropriate utterance based on the above context."
-        )
+        sections.append("\nGenerate an appropriate utterance based on the above context.")
 
         return "\n\n".join(sections)
 

@@ -68,6 +68,38 @@ class SchedulerSettings(BaseModel):
     slow_tick_multiplier: int = 10
 
 
+class QdrantSettings(BaseModel):
+    """Qdrant vector database settings for LTM."""
+
+    url: str = "http://localhost:6333"
+    collection_prefix: str = "ltm"
+    embedding_dim: int = 1536
+
+
+class LocalLLMSettings(BaseModel):
+    """Local LLM inference server settings."""
+
+    provider: str = "ollama"  # "ollama" or "vllm"
+    url: str = "http://localhost:11434"
+    model: str = "llama3"
+    timeout: float = 30.0
+
+
+class CheckpointSettings(BaseModel):
+    """Agent state checkpoint settings."""
+
+    dir: str = "checkpoints"
+    max_count: int = 10
+    interval_seconds: float = 300.0  # 5 minutes
+
+
+class ConsolidationSettings(BaseModel):
+    """Memory consolidation (STM -> LTM) settings."""
+
+    batch_size: int = 10
+    min_importance: float = 0.3
+
+
 class LogSettings(BaseModel):
     """Logging settings."""
 
@@ -103,6 +135,10 @@ class PianoSettings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    local_llm: LocalLLMSettings = Field(default_factory=LocalLLMSettings)
+    checkpoint: CheckpointSettings = Field(default_factory=CheckpointSettings)
+    consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
 
 
 def get_settings(**overrides: object) -> PianoSettings:

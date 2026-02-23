@@ -11,9 +11,6 @@ from piano.memory.ltm_search import (
     LTMRetrievalModule,
     RetrievalQuery,
 )
-from piano.memory.ltm_search import (
-    LTMStore as LTMStoreProtocol,
-)
 from piano.memory.manager import MemoryManager
 from piano.memory.stm import ShortTermMemory
 from piano.memory.working import WorkingMemory
@@ -26,7 +23,6 @@ __all__ = [
     "LTMEntry",
     "LTMRetrievalModule",
     "LTMStore",
-    "LTMStoreProtocol",
     "MemoryConsolidationModule",
     "MemoryManager",
     "QdrantLTMStore",

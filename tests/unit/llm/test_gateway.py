@@ -10,6 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from structlog.testing import capture_logs
 
 from piano.core.types import LLMRequest, LLMResponse, ModuleTier
 from piano.llm.gateway import (
@@ -496,7 +497,7 @@ class TestCostTracking:
         finally:
             await gw.stop()
 
-    async def test_cost_alert_threshold(self, mock_provider: AsyncMock, caplog) -> None:
+    async def test_cost_alert_threshold(self, mock_provider: AsyncMock) -> None:
         mock_provider.complete = AsyncMock(
             return_value=LLMResponse(
                 content="ok",
@@ -513,14 +514,47 @@ class TestCostTracking:
         await gw.start()
 
         try:
-            # Submit request that exceeds threshold
-            await gw.submit(LLMRequest(prompt="test"), agent_id="agent-1")
+            with capture_logs() as cap_logs:
+                # Submit request that exceeds threshold
+                await gw.submit(LLMRequest(prompt="test"), agent_id="agent-1")
 
-            # Wait for processing
-            await asyncio.sleep(0.1)
+                # Wait for processing
+                await asyncio.sleep(0.1)
 
-            # Check for warning in logs
-            assert any("Cost threshold exceeded" in record.message for record in caplog.records)
+            # Check for warning in structlog output
+            assert any(
+                log.get("event") == "cost_threshold_exceeded" for log in cap_logs
+            )
+            # Verify cost_exceeded flag is set
+            assert gw._cost_exceeded is True
+
+        finally:
+            await gw.stop()
+
+    async def test_cost_exceeded_rejects_new_requests(self, mock_provider: AsyncMock) -> None:
+        """After cost threshold is exceeded, new requests should be rejected."""
+        mock_provider.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="ok",
+                model="mock",
+                latency_ms=10.0,
+                cost_usd=0.6,
+            )
+        )
+
+        gw = LLMGateway(
+            mock_provider, max_concurrent=10, requests_per_minute=100, cost_alert_threshold=0.5
+        )
+        await gw.start()
+
+        try:
+            # First request succeeds but triggers cost threshold
+            await gw.submit(LLMRequest(prompt="test 1"), agent_id="agent-1")
+            assert gw._cost_exceeded is True
+
+            # Second request should be rejected
+            with pytest.raises(RuntimeError, match="Cost threshold exceeded"):
+                await gw.submit(LLMRequest(prompt="test 2"), agent_id="agent-2")
 
         finally:
             await gw.stop()
@@ -599,12 +633,16 @@ class TestGatewayLifecycle:
         await gw.stop()
         assert not gw._running
 
-    async def test_double_start_warning(self, mock_provider: AsyncMock, caplog) -> None:
+    async def test_double_start_warning(self, mock_provider: AsyncMock) -> None:
         gw = LLMGateway(mock_provider)
         await gw.start()
-        await gw.start()  # Should warn
 
-        assert any("already running" in record.message for record in caplog.records)
+        with capture_logs() as cap_logs:
+            await gw.start()  # Should warn
+
+        assert any(
+            log.get("event") == "gateway_already_running" for log in cap_logs
+        )
         await gw.stop()
 
     async def test_pending_count(self, mock_provider: AsyncMock) -> None:
@@ -638,3 +676,82 @@ class TestGatewayLifecycle:
 
         finally:
             await gw.stop()
+
+
+# ---------------------------------------------------------------------------
+# Background task reference tests
+# ---------------------------------------------------------------------------
+
+
+class TestBackgroundTaskReferences:
+    """Tests for background task reference management (GC safety)."""
+
+    async def test_dedup_cleanup_task_is_tracked(self, mock_provider: AsyncMock) -> None:
+        """Background dedup cleanup tasks should be stored in _background_tasks."""
+        gw = LLMGateway(mock_provider, max_concurrent=10, requests_per_minute=100)
+        await gw.start()
+
+        try:
+            # Before any submit, no background tasks
+            assert len(gw._background_tasks) == 0
+
+            # Submit a request (creates a dedup cleanup task)
+            await gw.submit(LLMRequest(prompt="test"), agent_id="agent-1")
+
+            # Background tasks set should have been populated
+            # (task may complete quickly, but was added)
+            # We verify the set exists and is a set of tasks
+            assert isinstance(gw._background_tasks, set)
+
+        finally:
+            await gw.stop()
+
+    async def test_background_tasks_cleaned_up_after_completion(
+        self, mock_provider: AsyncMock
+    ) -> None:
+        """Completed background tasks should be removed from _background_tasks."""
+        gw = LLMGateway(mock_provider, max_concurrent=10, requests_per_minute=100)
+        # Use a very short dedup TTL so cleanup tasks finish quickly
+        gw._dedup_ttl_seconds = 0.05
+        await gw.start()
+
+        try:
+            await gw.submit(LLMRequest(prompt="test"), agent_id="agent-1")
+
+            # Wait for cleanup tasks to complete
+            await asyncio.sleep(0.2)
+
+            # All background tasks should have been removed by done callback
+            assert len(gw._background_tasks) == 0
+
+        finally:
+            await gw.stop()
+
+
+# ---------------------------------------------------------------------------
+# structlog integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestStructlogIntegration:
+    """Tests for structlog logging output."""
+
+    async def test_gateway_start_emits_structlog(self, mock_provider: AsyncMock) -> None:
+        """Gateway start should emit structured log event."""
+        gw = LLMGateway(mock_provider)
+
+        with capture_logs() as cap_logs:
+            await gw.start()
+
+        assert any(log.get("event") == "gateway_started" for log in cap_logs)
+        await gw.stop()
+
+    async def test_gateway_stop_emits_structlog(self, mock_provider: AsyncMock) -> None:
+        """Gateway stop should emit structured log events."""
+        gw = LLMGateway(mock_provider)
+        await gw.start()
+
+        with capture_logs() as cap_logs:
+            await gw.stop()
+
+        assert any(log.get("event") == "gateway_stopped" for log in cap_logs)

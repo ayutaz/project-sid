@@ -16,13 +16,14 @@ __all__ = [
 ]
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 import structlog
 from pydantic import BaseModel, Field
 
 from piano.core.module import Module
 from piano.core.types import LLMRequest, MemoryEntry, ModuleResult, ModuleTier
+from piano.memory.ltm import LTMEntry, LTMStore
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -31,14 +32,6 @@ if TYPE_CHECKING:
     from piano.llm.provider import LLMProvider
 
 logger = structlog.get_logger(__name__)
-
-
-class LTMStore(Protocol):
-    """Protocol for LTM storage backend."""
-
-    async def store(self, entry: MemoryEntry) -> None:
-        """Store a memory entry in long-term memory."""
-        ...
 
 
 class ConsolidationPolicy(BaseModel):
@@ -145,6 +138,9 @@ class MemoryConsolidationModule(Module):
                     data={"consolidated": 0, "stm_size": len(stm_entries)},
                 )
 
+            # Get agent_id from SAS for LTM store calls
+            agent_id = sas.agent_id
+
             # 5. Optionally summarize related entries
             summaries_created = 0
             if self._llm_provider is not None and len(to_consolidate) > 1:
@@ -162,21 +158,15 @@ class MemoryConsolidationModule(Module):
                             "is_summary": True,
                         },
                     )
-                    summary_entry.metadata["embedding"] = self._generate_embedding_placeholder(
-                        summary
-                    )
-                    await self._ltm_store.store(summary_entry)
+                    ltm_summary = self._memory_to_ltm(summary_entry)
+                    await self._ltm_store.store(agent_id, ltm_summary)
                     summaries_created = 1
 
             # 6. Store individual entries in LTM
             consolidated_ids: list[UUID] = []
             for entry in to_consolidate:
-                # Add embedding placeholder if not already present
-                if "embedding" not in entry.metadata:
-                    entry.metadata["embedding"] = self._generate_embedding_placeholder(
-                        entry.content
-                    )
-                await self._ltm_store.store(entry)
+                ltm_entry = self._memory_to_ltm(entry)
+                await self._ltm_store.store(agent_id, ltm_entry)
                 consolidated_ids.append(entry.id)
 
             logger.info(
@@ -283,7 +273,34 @@ Summary:"""
             logger.warning("summarization_failed", error=str(exc))
             return ""
 
-    def _generate_embedding_placeholder(self, content: str) -> list[float]:
+    def _memory_to_ltm(self, entry: MemoryEntry) -> LTMEntry:
+        """Convert a MemoryEntry (STM/WM) to an LTMEntry for long-term storage.
+
+        Generates a placeholder embedding vector for the entry.
+
+        Args:
+            entry: The MemoryEntry to convert.
+
+        Returns:
+            A new LTMEntry with a placeholder embedding.
+        """
+        return LTMEntry(
+            id=entry.id,
+            timestamp=entry.timestamp,
+            content=entry.content,
+            category=entry.category,
+            importance=entry.importance,
+            source_module=entry.source_module,
+            metadata={
+                k: v
+                for k, v in entry.metadata.items()
+                if isinstance(v, (str, int, float, bool))
+            },
+            embedding=self._generate_embedding_placeholder(entry.content),
+        )
+
+    @staticmethod
+    def _generate_embedding_placeholder(content: str) -> list[float]:
         """Generate a placeholder embedding vector.
 
         In production, this would call an embedding model. For now, we return

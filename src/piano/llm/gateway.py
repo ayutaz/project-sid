@@ -19,7 +19,6 @@ __all__ = [
 import asyncio
 import hashlib
 import json
-import logging
 import time
 from collections import defaultdict, deque
 from datetime import UTC, datetime
@@ -27,6 +26,7 @@ from enum import IntEnum
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import structlog
 from pydantic import BaseModel, Field
 
 from piano.core.types import LLMRequest, LLMResponse  # noqa: TC001
@@ -34,7 +34,7 @@ from piano.core.types import LLMRequest, LLMResponse  # noqa: TC001
 if TYPE_CHECKING:
     from piano.llm.provider import LLMProvider
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class RequestPriority(IntEnum):
@@ -97,9 +97,9 @@ class CircuitBreaker:
         now = time.monotonic()
         self._failures[provider_id].append(now)
         logger.warning(
-            "Circuit breaker recorded failure for provider %s (failures: %d)",
-            provider_id,
-            len(self._failures[provider_id]),
+            "circuit_breaker_failure",
+            provider_id=provider_id,
+            failures=len(self._failures[provider_id]),
         )
 
     def record_success(self, provider_id: str) -> None:
@@ -134,10 +134,10 @@ class CircuitBreaker:
         is_open = len(failures) >= self.failure_threshold
         if is_open:
             logger.warning(
-                "Circuit breaker is OPEN for provider %s (%d failures in last %.1fs)",
-                provider_id,
-                len(failures),
-                self.reset_timeout_seconds,
+                "circuit_breaker_open",
+                provider_id=provider_id,
+                failures=len(failures),
+                reset_timeout_seconds=self.reset_timeout_seconds,
             )
         return is_open
 
@@ -149,7 +149,7 @@ class CircuitBreaker:
         """
         if provider_id in self._failures:
             del self._failures[provider_id]
-            logger.info("Circuit breaker manually reset for provider %s", provider_id)
+            logger.info("circuit_breaker_reset", provider_id=provider_id)
 
 
 class LLMGateway:
@@ -202,6 +202,12 @@ class LLMGateway:
         # Deduplication cache (short-lived)
         self._dedup_cache: dict[str, asyncio.Future[LLMResponse]] = {}
         self._dedup_ttl_seconds = 5.0
+
+        # Background tasks (prevent GC of fire-and-forget tasks)
+        self._background_tasks: set[asyncio.Task[None]] = set()
+
+        # Cost exceeded flag
+        self._cost_exceeded = False
 
         # Background task
         self._processor_task: asyncio.Task[None] | None = None
@@ -282,13 +288,20 @@ class LLMGateway:
         if not self._running:
             raise RuntimeError("Gateway is not running. Call start() first.")
 
+        # Check cost exceeded
+        if self._cost_exceeded:
+            raise RuntimeError(
+                f"Cost threshold exceeded (${self._total_cost_usd:.2f} >= "
+                f"${self._cost_alert_threshold:.2f}). New requests are rejected."
+            )
+
         # Check rate limits
         self._check_rate_limit(agent_id)
 
         # Check deduplication cache
         dedup_key = self._make_dedup_key(request)
         if dedup_key in self._dedup_cache:
-            logger.debug("Request deduplicated (cache hit): %s", dedup_key[:16])
+            logger.debug("request_deduplicated", dedup_key=dedup_key[:16])
             return await self._dedup_cache[dedup_key]
 
         # Create queued request
@@ -305,15 +318,17 @@ class LLMGateway:
             if dedup_key in self._dedup_cache:
                 del self._dedup_cache[dedup_key]
 
-        _ = asyncio.create_task(_cleanup_dedup())  # noqa: RUF006
+        task = asyncio.create_task(_cleanup_dedup())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
         # Add to queue
         await self._queue.put(queued)
         logger.debug(
-            "Request queued: priority=%s agent=%s future_id=%s",
-            priority.name,
-            agent_id,
-            queued.future_id[:8],
+            "request_queued",
+            priority=priority.name,
+            agent_id=agent_id,
+            future_id=queued.future_id[:8],
         )
 
         # Wait for result
@@ -325,7 +340,7 @@ class LLMGateway:
         Runs continuously while the gateway is active, respecting
         concurrency limits and circuit breaker state.
         """
-        logger.info("Gateway processor started")
+        logger.info("gateway_processor_started")
 
         while self._running:
             try:
@@ -339,7 +354,7 @@ class LLMGateway:
                 provider_id = queued.request.model or "default"
                 if self._circuit_breaker.is_open(provider_id):
                     error_msg = f"Circuit breaker open for provider {provider_id}"
-                    logger.error(error_msg)
+                    logger.error("circuit_breaker_rejected", provider_id=provider_id)
                     future = self._futures.pop(queued.future_id, None)
                     if future and not future.done():
                         future.set_exception(Exception(error_msg))
@@ -351,9 +366,9 @@ class LLMGateway:
                     await self._process_request(queued)
 
             except Exception as exc:
-                logger.exception("Error in gateway processor: %s", exc)
+                logger.exception("gateway_processor_error", error=str(exc))
 
-        logger.info("Gateway processor stopped")
+        logger.info("gateway_processor_stopped")
 
     async def _process_request(self, queued: QueuedRequest) -> None:
         """Process a single queued request.
@@ -381,20 +396,21 @@ class LLMGateway:
             # Check cost threshold
             if self._total_cost_usd >= self._cost_alert_threshold:
                 logger.warning(
-                    "Cost threshold exceeded: $%.2f >= $%.2f",
-                    self._total_cost_usd,
-                    self._cost_alert_threshold,
+                    "cost_threshold_exceeded",
+                    total_cost_usd=self._total_cost_usd,
+                    threshold_usd=self._cost_alert_threshold,
                 )
+                self._cost_exceeded = True
 
             # Set result
             future.set_result(response)
 
             latency = (time.monotonic() - start_time) * 1000
             logger.debug(
-                "Request completed: agent=%s latency=%.1fms cost=$%.4f",
-                queued.agent_id,
-                latency,
-                response.cost_usd,
+                "request_completed",
+                agent_id=queued.agent_id,
+                latency_ms=round(latency, 1),
+                cost_usd=response.cost_usd,
             )
 
         except Exception as exc:
@@ -406,9 +422,9 @@ class LLMGateway:
             future.set_exception(exc)
 
             logger.error(
-                "Request failed: agent=%s error=%s",
-                queued.agent_id,
-                exc,
+                "request_failed",
+                agent_id=queued.agent_id,
+                error=str(exc),
             )
 
     def get_stats(self) -> dict[str, object]:
@@ -444,19 +460,19 @@ class LLMGateway:
     async def start(self) -> None:
         """Start the gateway background processor."""
         if self._running:
-            logger.warning("Gateway is already running")
+            logger.warning("gateway_already_running")
             return
 
         self._running = True
         self._processor_task = asyncio.create_task(self._process_queue())
-        logger.info("Gateway started")
+        logger.info("gateway_started")
 
     async def stop(self) -> None:
         """Stop the gateway and drain the queue."""
         if not self._running:
             return
 
-        logger.info("Stopping gateway...")
+        logger.info("gateway_stopping")
         self._running = False
 
         # Wait for processor to finish
@@ -472,7 +488,7 @@ class LLMGateway:
         self._dedup_cache.clear()
 
         logger.info(
-            "Gateway stopped. Processed %d requests, $%.2f total cost",
-            self._total_requests,
-            self._total_cost_usd,
+            "gateway_stopped",
+            total_requests=self._total_requests,
+            total_cost_usd=round(self._total_cost_usd, 2),
         )

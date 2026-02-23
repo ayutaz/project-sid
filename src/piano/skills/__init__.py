@@ -1,12 +1,66 @@
 """Skill execution module for Minecraft actions."""
 
+from piano.skills.advanced import (
+    ADVANCED_SKILLS,
+    CraftingRecipes,
+    attack_entity,
+    build_structure,
+    craft_chain,
+    defend,
+    deposit_items,
+    explore_direction,
+    farm_harvest,
+    farm_plant,
+    flee,
+    register_advanced_skills,
+    smelt_item,
+    withdraw_items,
+)
 from piano.skills.basic import create_default_registry
 from piano.skills.executor import SkillExecutor
 from piano.skills.registry import Skill, SkillRegistry
+from piano.skills.social import (
+    SOCIAL_SKILLS,
+    follow_agent,
+    form_group,
+    gift_item,
+    leave_group,
+    register_social_skills,
+    request_help,
+    send_message,
+    trade_items,
+    unfollow_agent,
+    vote,
+)
 
 __all__ = [
+    "ADVANCED_SKILLS",
+    "SOCIAL_SKILLS",
+    "CraftingRecipes",
     "Skill",
     "SkillExecutor",
     "SkillRegistry",
+    "attack_entity",
+    "build_structure",
+    "craft_chain",
     "create_default_registry",
+    "defend",
+    "deposit_items",
+    "explore_direction",
+    "farm_harvest",
+    "farm_plant",
+    "flee",
+    "follow_agent",
+    "form_group",
+    "gift_item",
+    "leave_group",
+    "register_advanced_skills",
+    "register_social_skills",
+    "request_help",
+    "send_message",
+    "smelt_item",
+    "trade_items",
+    "unfollow_agent",
+    "vote",
+    "withdraw_items",
 ]

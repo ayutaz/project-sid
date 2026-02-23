@@ -12,6 +12,7 @@ from __future__ import annotations
 __all__ = ["Checkpoint", "CheckpointManager", "CheckpointMetadata"]
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -64,6 +65,8 @@ class CheckpointManager:
     File format: {checkpoint_dir}/{agent_id}/{timestamp_iso}.json
     """
 
+    _SAFE_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
     def __init__(
         self,
         checkpoint_dir: str | Path,
@@ -90,6 +93,29 @@ class CheckpointManager:
             interval_seconds=interval_seconds,
         )
 
+    def _validate_agent_id(self, agent_id: str) -> None:
+        """Validate agent_id to prevent path traversal attacks.
+
+        Args:
+            agent_id: Agent ID to validate
+
+        Raises:
+            ValueError: If agent_id contains unsafe characters
+        """
+        if not self._SAFE_AGENT_ID_RE.match(agent_id):
+            msg = (
+                f"Invalid agent_id {agent_id!r}: "
+                "must contain only alphanumeric characters, hyphens, and underscores"
+            )
+            raise ValueError(msg)
+
+        # Defense in depth: verify resolved path stays within checkpoint_dir
+        resolved = (self.checkpoint_dir / agent_id).resolve()
+        checkpoint_root = self.checkpoint_dir.resolve()
+        if not str(resolved).startswith(str(checkpoint_root)):
+            msg = f"agent_id {agent_id!r} resolves outside checkpoint directory"
+            raise ValueError(msg)
+
     def get_checkpoint_path(self, agent_id: str, metadata: CheckpointMetadata) -> Path:
         """Get the filesystem path for a checkpoint.
 
@@ -99,7 +125,11 @@ class CheckpointManager:
 
         Returns:
             Path to checkpoint file
+
+        Raises:
+            ValueError: If agent_id contains unsafe characters
         """
+        self._validate_agent_id(agent_id)
         agent_dir = self.checkpoint_dir / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
         # Use ISO format timestamp for filename (replace colons for Windows compatibility)
@@ -119,6 +149,7 @@ class CheckpointManager:
         Returns:
             CheckpointMetadata for the saved checkpoint
         """
+        self._validate_agent_id(agent_id)
         self.logger.debug("checkpoint_save_start", agent_id=agent_id, tick_count=tick_count)
 
         # Take SAS snapshot
@@ -178,6 +209,7 @@ class CheckpointManager:
             FileNotFoundError: If no checkpoint exists for this agent
             ValueError: If checkpoint_id is specified but not found
         """
+        self._validate_agent_id(agent_id)
         self.logger.debug(
             "checkpoint_restore_start", agent_id=agent_id, checkpoint_id=checkpoint_id
         )
@@ -275,7 +307,11 @@ class CheckpointManager:
 
         Returns:
             List of checkpoint metadata, sorted by timestamp descending
+
+        Raises:
+            ValueError: If agent_id contains unsafe characters
         """
+        self._validate_agent_id(agent_id)
         agent_dir = self.checkpoint_dir / agent_id
         if not agent_dir.exists():
             return []
@@ -308,7 +344,11 @@ class CheckpointManager:
 
         Args:
             agent_id: Agent ID
+
+        Raises:
+            ValueError: If agent_id contains unsafe characters
         """
+        self._validate_agent_id(agent_id)
         checkpoints = self.list_checkpoints(agent_id)
 
         # Delete excess checkpoints

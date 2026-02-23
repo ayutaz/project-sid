@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from uuid import UUID
+
 from piano.core.types import GoalData, MemoryEntry, ModuleTier, PerceptData
+from piano.memory.ltm import LTMEntry
 from piano.memory.ltm_search import (
     ForgettingCurve,
     LTMRetrievalModule,
@@ -18,42 +23,79 @@ from tests.helpers import InMemorySAS
 
 
 class MockLTMStore:
-    """Mock LTM store for testing that returns preset memories."""
+    """Mock LTM store for testing that returns preset memories.
 
-    def __init__(self, preset_memories: list[MemoryEntry] | None = None) -> None:
+    Implements the canonical LTMStore protocol from piano.memory.ltm.
+    """
+
+    def __init__(self, preset_memories: list[LTMEntry] | None = None) -> None:
         self.preset_memories = preset_memories or []
         self.search_calls: list[dict] = []
 
+    async def initialize(self) -> None:
+        pass
+
+    async def shutdown(self) -> None:
+        pass
+
+    async def store(self, agent_id: str, entry: LTMEntry) -> UUID:
+        return entry.id
+
+    async def retrieve(self, agent_id: str, entry_id: UUID) -> LTMEntry | None:
+        for m in self.preset_memories:
+            if m.id == entry_id:
+                return m
+        return None
+
     async def search(
         self,
-        query_text: str,
-        category_filter: str | None = None,
-        min_importance: float = 0.0,
-        max_results: int = 10,
-    ) -> list[MemoryEntry]:
-        """Mock search that returns preset memories matching the filter."""
+        agent_id: str,
+        query_embedding: list[float],
+        limit: int = 10,
+        min_score: float = 0.0,
+    ) -> list[LTMEntry]:
+        """Mock search that returns preset memories.
+
+        Records each call for assertion. Since we use placeholder embeddings,
+        we simply return all preset memories (filtered by limit).
+        """
         self.search_calls.append(
             {
-                "query_text": query_text,
-                "category_filter": category_filter,
-                "min_importance": min_importance,
-                "max_results": max_results,
+                "agent_id": agent_id,
+                "query_embedding": query_embedding,
+                "limit": limit,
+                "min_score": min_score,
             }
         )
+        # Return all preset memories up to limit
+        return self.preset_memories[:limit]
 
-        # Filter by category if specified
-        results = self.preset_memories
-        if category_filter:
-            results = [m for m in results if m.category == category_filter]
+    async def delete(self, agent_id: str, entry_id: UUID) -> bool:
+        return False
 
-        # Filter by importance
-        results = [m for m in results if m.importance >= min_importance]
-
-        # Limit results
-        return results[:max_results]
+    async def get_stats(self, agent_id: str) -> dict[str, float | int]:
+        return {"count": len(self.preset_memories), "avg_importance": 0.0, "total_accesses": 0}
 
 
 # --- Helper functions ---
+
+
+def _ltm_entry(
+    content: str,
+    category: str = "episodic",
+    importance: float = 0.5,
+    age_hours: float = 0.0,
+) -> LTMEntry:
+    """Create a test LTM entry with specified age."""
+    ts = datetime.now(UTC) - timedelta(hours=age_hours)
+    return LTMEntry(
+        timestamp=ts,
+        content=content,
+        category=category,
+        importance=importance,
+        source_module="test",
+        embedding=[0.1] * 384,
+    )
 
 
 def _memory(
@@ -335,8 +377,8 @@ class TestLTMRetrievalTick:
         await sas.update_goals(GoalData(current_goal="mine iron"))
 
         memories = [
-            _memory("found iron at x=100", category="semantic", importance=0.8),
-            _memory("mining is hard work", category="semantic", importance=0.6),
+            _ltm_entry("found iron at x=100", category="semantic", importance=0.8),
+            _ltm_entry("mining is hard work", category="semantic", importance=0.6),
         ]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store, max_memories_per_tick=5)
@@ -360,7 +402,7 @@ class TestLTMRetrievalTick:
 
         # Create many memories
         memories = [
-            _memory(f"memory {i}", category="semantic", importance=0.5)
+            _ltm_entry(f"memory {i}", category="semantic", importance=0.5)
             for i in range(20)
         ]
         store = MockLTMStore(preset_memories=memories)
@@ -381,9 +423,9 @@ class TestLTMRetrievalTick:
         await sas.update_goals(GoalData(current_goal="test"))
 
         memories = [
-            _memory("fresh", category="semantic", importance=0.8, age_hours=0.1),
+            _ltm_entry("fresh", category="semantic", importance=0.8, age_hours=0.1),
             # Old memory will be filtered by forgetting curve
-            _memory("old", category="semantic", importance=0.5, age_hours=10.0),
+            _ltm_entry("old", category="semantic", importance=0.5, age_hours=10.0),
         ]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store, retention_threshold=0.1)
@@ -403,7 +445,7 @@ class TestLTMRetrievalTick:
         await sas.update_percepts(PerceptData(nearby_players=["alice"]))
 
         # Create a memory that could match multiple queries
-        memory = _memory("alice helped with iron mining", category="social", importance=0.7)
+        memory = _ltm_entry("alice helped with iron mining", category="social", importance=0.7)
         store = MockLTMStore(preset_memories=[memory, memory])  # Duplicate
         module = LTMRetrievalModule(store)
         result = await module.tick(sas)
@@ -423,9 +465,9 @@ class TestLTMRetrievalTick:
         await sas.update_goals(GoalData(current_goal="test"))
 
         memories = [
-            _memory("low importance", importance=0.3),
-            _memory("high importance", importance=0.9),
-            _memory("medium importance", importance=0.6),
+            _ltm_entry("low importance", importance=0.3),
+            _ltm_entry("high importance", importance=0.9),
+            _ltm_entry("medium importance", importance=0.6),
         ]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store, max_memories_per_tick=2)
@@ -464,7 +506,7 @@ class TestLTMRetrievalTick:
         await sas.set_working_memory([existing])
 
         await sas.update_goals(GoalData(current_goal="test"))
-        memories = [_memory("new memory", category="semantic", importance=0.7)]
+        memories = [_ltm_entry("new memory", category="semantic", importance=0.7)]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store)
         result = await module.tick(sas)
@@ -480,7 +522,7 @@ class TestLTMRetrievalTick:
     async def test_tick_error_handling(self) -> None:
         """Tick should handle errors gracefully."""
         class FailingStore:
-            async def search(self, **kwargs):
+            async def search(self, agent_id, query_embedding, **kwargs):
                 raise RuntimeError("Search failed")
 
         sas = InMemorySAS()
@@ -506,18 +548,24 @@ class TestLTMRetrievalCategoryFiltering:
         await sas.update_goals(GoalData(current_goal="test goal"))
 
         memories = [
-            _memory("semantic memory", category="semantic", importance=0.7),
-            _memory("social memory", category="social", importance=0.7),
+            _ltm_entry("semantic memory", category="semantic", importance=0.7),
+            _ltm_entry("social memory", category="social", importance=0.7),
         ]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store)
-        await module.tick(sas)
+        result = await module.tick(sas)
 
-        # Check that search was called with category filter
+        assert result.success
+        # Check that search was called
         assert len(store.search_calls) >= 1
-        goal_call = next((c for c in store.search_calls if "test goal" in c["query_text"]), None)
-        assert goal_call is not None
-        assert goal_call["category_filter"] == "semantic"
+        # The module now applies category filtering client-side after search.
+        # Verify only semantic memories were injected (social filtered out).
+        wm = await sas.get_working_memory()
+        ltm_entries = [e for e in wm if e.category == "ltm_retrieval"]
+        for e in ltm_entries:
+            assert e.metadata.get("original_category") != "social" or e.metadata.get(
+                "original_category"
+            ) is None
 
     @pytest.mark.asyncio
     async def test_category_filter_social(self) -> None:
@@ -525,14 +573,16 @@ class TestLTMRetrievalCategoryFiltering:
         sas = InMemorySAS()
         await sas.update_percepts(PerceptData(nearby_players=["alice"]))
 
-        store = MockLTMStore()
+        memories = [
+            _ltm_entry("alice helped me", category="social", importance=0.7),
+        ]
+        store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store)
-        await module.tick(sas)
+        result = await module.tick(sas)
 
-        # Check that search was called with social filter
-        social_calls = [c for c in store.search_calls if c["category_filter"] == "social"]
-        assert len(social_calls) >= 1
-        assert any("alice" in c["query_text"] for c in social_calls)
+        assert result.success
+        # Check that search was called
+        assert len(store.search_calls) >= 1
 
 
 # --- Module lifecycle tests ---

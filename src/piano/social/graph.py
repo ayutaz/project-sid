@@ -258,8 +258,8 @@ class SocialGraph:
         try:
             pagerank = nx.pagerank(weighted_graph, weight="weight")
             return pagerank.get(agent_id, 0.0)
-        except Exception:
-            # Fallback if PageRank fails
+        except Exception as exc:
+            logger.warning("pagerank_failed", error=str(exc))
             return 0.0
 
     def get_communities(self) -> list[set[str]]:

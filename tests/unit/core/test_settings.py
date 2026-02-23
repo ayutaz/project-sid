@@ -14,10 +14,14 @@ import pytest
 from piano.config.settings import (
     AgentSettings,
     BridgeSettings,
+    CheckpointSettings,
+    ConsolidationSettings,
     LLMSettings,
+    LocalLLMSettings,
     LogSettings,
     MinecraftSettings,
     PianoSettings,
+    QdrantSettings,
     RedisSettings,
     SchedulerSettings,
     get_settings,
@@ -74,6 +78,30 @@ class TestDefaultSettings:
         assert settings.log.level == "INFO"
         assert settings.log.format == "json"
 
+    def test_default_qdrant_settings(self) -> None:
+        settings = PianoSettings()
+        assert settings.qdrant.url == "http://localhost:6333"
+        assert settings.qdrant.collection_prefix == "ltm"
+        assert settings.qdrant.embedding_dim == 1536
+
+    def test_default_local_llm_settings(self) -> None:
+        settings = PianoSettings()
+        assert settings.local_llm.provider == "ollama"
+        assert settings.local_llm.url == "http://localhost:11434"
+        assert settings.local_llm.model == "llama3"
+        assert settings.local_llm.timeout == 30.0
+
+    def test_default_checkpoint_settings(self) -> None:
+        settings = PianoSettings()
+        assert settings.checkpoint.dir == "checkpoints"
+        assert settings.checkpoint.max_count == 10
+        assert settings.checkpoint.interval_seconds == 300.0
+
+    def test_default_consolidation_settings(self) -> None:
+        settings = PianoSettings()
+        assert settings.consolidation.batch_size == 10
+        assert settings.consolidation.min_importance == 0.3
+
 
 class TestEnvironmentOverride:
     """Test that environment variables override defaults."""
@@ -118,6 +146,46 @@ class TestEnvironmentOverride:
             settings = PianoSettings()
             assert settings.minecraft.host == "mc-server"
 
+    def test_qdrant_url_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_QDRANT__URL": "http://qdrant:6333"}):
+            settings = PianoSettings()
+            assert settings.qdrant.url == "http://qdrant:6333"
+
+    def test_qdrant_embedding_dim_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_QDRANT__EMBEDDING_DIM": "384"}):
+            settings = PianoSettings()
+            assert settings.qdrant.embedding_dim == 384
+
+    def test_local_llm_provider_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_LOCAL_LLM__PROVIDER": "vllm"}):
+            settings = PianoSettings()
+            assert settings.local_llm.provider == "vllm"
+
+    def test_local_llm_url_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_LOCAL_LLM__URL": "http://vllm:8000"}):
+            settings = PianoSettings()
+            assert settings.local_llm.url == "http://vllm:8000"
+
+    def test_checkpoint_dir_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_CHECKPOINT__DIR": "/data/checkpoints"}):
+            settings = PianoSettings()
+            assert settings.checkpoint.dir == "/data/checkpoints"
+
+    def test_checkpoint_interval_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_CHECKPOINT__INTERVAL_SECONDS": "600.0"}):
+            settings = PianoSettings()
+            assert settings.checkpoint.interval_seconds == 600.0
+
+    def test_consolidation_batch_size_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_CONSOLIDATION__BATCH_SIZE": "20"}):
+            settings = PianoSettings()
+            assert settings.consolidation.batch_size == 20
+
+    def test_consolidation_min_importance_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_CONSOLIDATION__MIN_IMPORTANCE": "0.5"}):
+            settings = PianoSettings()
+            assert settings.consolidation.min_importance == 0.5
+
     def test_multiple_overrides(self) -> None:
         env = {
             "PIANO_REDIS__HOST": "redis-prod",
@@ -138,10 +206,7 @@ class TestEnvFileLoading:
 
     def test_env_file_loading(self, tmp_path: Path) -> None:
         env_file = tmp_path / ".env"
-        env_file.write_text(
-            "PIANO_REDIS__HOST=from-env-file\n"
-            "PIANO_LLM__API_KEY=sk-from-file\n"
-        )
+        env_file.write_text("PIANO_REDIS__HOST=from-env-file\nPIANO_LLM__API_KEY=sk-from-file\n")
         settings = PianoSettings(_env_file=str(env_file))
         assert settings.redis.host == "from-env-file"
         assert settings.llm.api_key == "sk-from-file"
@@ -189,6 +254,10 @@ class TestGetSettings:
         assert isinstance(settings.agent, AgentSettings)
         assert isinstance(settings.scheduler, SchedulerSettings)
         assert isinstance(settings.log, LogSettings)
+        assert isinstance(settings.qdrant, QdrantSettings)
+        assert isinstance(settings.local_llm, LocalLLMSettings)
+        assert isinstance(settings.checkpoint, CheckpointSettings)
+        assert isinstance(settings.consolidation, ConsolidationSettings)
 
 
 class TestNestedSettingsModels:
@@ -205,3 +274,32 @@ class TestNestedSettingsModels:
         custom_tiers = {"fast": "gpt-4o-mini", "mid": "gpt-4o", "slow": "gpt-4o"}
         llm = LLMSettings(tier_models=custom_tiers)
         assert llm.tier_models["mid"] == "gpt-4o"
+
+    def test_qdrant_settings_model(self) -> None:
+        q = QdrantSettings(url="http://qdrant:6333", collection_prefix="test", embedding_dim=384)
+        assert q.url == "http://qdrant:6333"
+        assert q.collection_prefix == "test"
+        assert q.embedding_dim == 384
+
+    def test_local_llm_settings_model(self) -> None:
+        llm = LocalLLMSettings(
+            provider="vllm",
+            url="http://vllm:8000",
+            model="llama-3.3-70b",
+            timeout=60.0,
+        )
+        assert llm.provider == "vllm"
+        assert llm.url == "http://vllm:8000"
+        assert llm.model == "llama-3.3-70b"
+        assert llm.timeout == 60.0
+
+    def test_checkpoint_settings_model(self) -> None:
+        cp = CheckpointSettings(dir="/data/cp", max_count=5, interval_seconds=120.0)
+        assert cp.dir == "/data/cp"
+        assert cp.max_count == 5
+        assert cp.interval_seconds == 120.0
+
+    def test_consolidation_settings_model(self) -> None:
+        c = ConsolidationSettings(batch_size=20, min_importance=0.5)
+        assert c.batch_size == 20
+        assert c.min_importance == 0.5

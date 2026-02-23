@@ -28,8 +28,9 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from pydantic import BaseModel, Field
 
+from piano.cc.compression import sanitize_text
 from piano.core.module import Module
-from piano.core.types import LLMRequest, ModuleTier
+from piano.core.types import LLMRequest, ModuleResult, ModuleTier
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
@@ -138,8 +139,6 @@ class SocialAwarenessModule(Module):
         Returns:
             ModuleResult with social awareness data.
         """
-        from piano.core.types import ModuleResult
-
         # Calculate elapsed time since last activation
         current_time = time.time()
         if self._last_activation_time > 0:
@@ -315,7 +314,8 @@ class SocialAwarenessModule(Module):
         nearby = ", ".join(context["nearby_players"]) if context["nearby_players"] else "none"
         chat_summary = (
             "\n".join(
-                f"- {msg.get('username', 'unknown')}: {msg.get('message', '')}"
+                f"- {sanitize_text(msg.get('username', 'unknown'), max_length=50)}: "
+                f"{sanitize_text(msg.get('message', ''), max_length=200)}"
                 for msg in context["chat_messages"]
             )
             or "No recent chat"
