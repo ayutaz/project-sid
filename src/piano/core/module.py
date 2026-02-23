@@ -10,12 +10,11 @@ Reference: docs/implementation/01-system-architecture.md
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
-
-from piano.core.types import CCDecision, ModuleResult, ModuleTier
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
+    from piano.core.types import CCDecision, ModuleResult, ModuleTier
 
 
 class Module(ABC):
@@ -49,17 +48,17 @@ class Module(ABC):
         """
         ...
 
-    async def on_broadcast(self, decision: CCDecision) -> None:
+    async def on_broadcast(self, decision: CCDecision) -> None:  # noqa: B027
         """Handle a CC broadcast decision.
 
         Output modules (talking, skill execution) implement this to
         react to CC decisions. Input/processing modules can ignore it.
         """
 
-    async def initialize(self) -> None:
+    async def initialize(self) -> None:  # noqa: B027
         """One-time initialization (called before first tick)."""
 
-    async def shutdown(self) -> None:
+    async def shutdown(self) -> None:  # noqa: B027
         """Cleanup (called on agent shutdown)."""
 
     def __repr__(self) -> str:

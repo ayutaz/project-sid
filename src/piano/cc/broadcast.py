@@ -13,10 +13,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from piano.core.types import CCDecision
-
 if TYPE_CHECKING:
     from piano.core.module import Module
+    from piano.core.types import CCDecision
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +98,7 @@ class BroadcastManager:
 
         errors: dict[str, str] = {}
         success = 0
-        for name, result in zip(tasks, results):
+        for name, result in zip(tasks, results, strict=True):
             if isinstance(result, BaseException):
                 errors[name] = str(result)
                 logger.warning("Broadcast to %s failed: %s", name, result)

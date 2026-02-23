@@ -1,137 +1,80 @@
-"""Tests for the BridgeClient ZMQ communication layer."""
+"""Tests for the BridgeClient ZMQ communication layer.
+
+Uses unittest.mock to patch ZMQ sockets for reliable, fast unit tests.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import zmq
-import zmq.asyncio
 
-from piano.bridge.client import BridgeClient, DEFAULT_TIMEOUT_MS, MAX_RETRIES
+from piano.bridge.client import BridgeClient
 from piano.bridge.types import BridgeStatus
 from piano.core.types import BridgeCommand, BridgeEvent
 
-
 # ---------------------------------------------------------------------------
-# Helpers: in-process ZMQ mock server
-# ---------------------------------------------------------------------------
-
-
-class MockBridgeServer:
-    """Minimal ZMQ REP + PUB server running in-process for tests."""
-
-    def __init__(self, cmd_url: str, evt_url: str) -> None:
-        self._cmd_url = cmd_url
-        self._evt_url = evt_url
-        self._ctx: zmq.asyncio.Context | None = None
-        self._rep: zmq.asyncio.Socket | None = None
-        self._pub: zmq.asyncio.Socket | None = None
-        self._task: asyncio.Task[None] | None = None
-        self.received_commands: list[dict] = []
-        self._response_fn: callable | None = None
-
-    async def start(self) -> None:
-        self._ctx = zmq.asyncio.Context()
-        self._rep = self._ctx.socket(zmq.REP)
-        self._rep.bind(self._cmd_url)
-        self._pub = self._ctx.socket(zmq.PUB)
-        self._pub.bind(self._evt_url)
-        self._task = asyncio.create_task(self._loop())
-
-    async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        if self._rep:
-            self._rep.close()
-        if self._pub:
-            self._pub.close()
-        if self._ctx:
-            self._ctx.term()
-
-    def set_response(self, fn: callable) -> None:
-        """Set a callable(cmd_dict) -> response_dict for the mock server."""
-        self._response_fn = fn
-
-    async def publish_event(self, event: dict) -> None:
-        """Publish a single event on the PUB socket."""
-        assert self._pub is not None
-        await self._pub.send_json(event)
-
-    async def _loop(self) -> None:
-        assert self._rep is not None
-        while True:
-            try:
-                raw = await self._rep.recv_string()
-                cmd = json.loads(raw)
-                self.received_commands.append(cmd)
-
-                if self._response_fn:
-                    resp = self._response_fn(cmd)
-                else:
-                    resp = {
-                        "id": cmd.get("id", ""),
-                        "success": True,
-                        "data": {},
-                        "error": None,
-                    }
-                await self._rep.send_json(resp)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                break
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
-# Use unique inproc addresses per-test to avoid address reuse issues.
-# We use tcp on random ports instead since inproc needs shared context.
-_PORT_BASE = 15600
 
+def _make_mock_context() -> MagicMock:
+    """Create a mock ZMQ async context with socket factories."""
+    ctx = MagicMock()
+    ctx.destroy = MagicMock()
 
-def _ports(request: pytest.FixtureRequest) -> tuple[int, int]:
-    """Return unique port pair for a test."""
-    # Use the test node id hash for a quasi-unique offset
-    offset = abs(hash(request.node.nodeid)) % 500
-    cmd_port = _PORT_BASE + offset * 2
-    evt_port = _PORT_BASE + offset * 2 + 1
-    return cmd_port, evt_port
+    def _make_socket(sock_type: int) -> MagicMock:
+        sock = MagicMock()
+        sock.setsockopt = MagicMock()
+        sock.connect = MagicMock()
+        sock.subscribe = MagicMock()
+        sock.close = MagicMock()
+        sock.send_string = AsyncMock()
+        sock.recv_json = AsyncMock(return_value={
+            "id": "test",
+            "success": True,
+            "data": {},
+            "error": None,
+        })
+        sock.send_json = AsyncMock()
+        return sock
+
+    ctx.socket = MagicMock(side_effect=_make_socket)
+    return ctx
 
 
 @pytest.fixture
-async def bridge_env(request: pytest.FixtureRequest):
-    """Yield a (server, client) pair wired together via TCP."""
-    cmd_port, evt_port = _ports(request)
-    cmd_url = f"tcp://127.0.0.1:{cmd_port}"
-    evt_url = f"tcp://127.0.0.1:{evt_port}"
+def mock_ctx() -> MagicMock:
+    """Return a mock ZMQ context."""
+    return _make_mock_context()
 
-    server = MockBridgeServer(cmd_url, evt_url)
-    await server.start()
-    # Small sleep to let ZMQ sockets bind
-    await asyncio.sleep(0.05)
 
-    client = BridgeClient(
-        command_url=cmd_url,
-        event_url=evt_url,
-        timeout_ms=2000,
-    )
-    await client.connect()
+@pytest.fixture
+async def connected_client(mock_ctx: MagicMock) -> tuple[BridgeClient, MagicMock, MagicMock]:
+    """Return (client, cmd_socket, sub_socket) with client already connected."""
+    with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+        client = BridgeClient(
+            command_url="tcp://127.0.0.1:5555",
+            event_url="tcp://127.0.0.1:5556",
+            timeout_ms=2000,
+        )
+        await client.connect()
 
-    yield server, client
+        # Access the actual mock objects from the client's internals
+        cmd_mock = client._cmd_socket
+        sub_mock = client._sub_socket
 
-    await client.disconnect()
-    await server.stop()
+        yield client, cmd_mock, sub_mock
+
+        await client.disconnect()
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests: Connection lifecycle
 # ---------------------------------------------------------------------------
 
 
@@ -139,31 +82,39 @@ class TestBridgeClientConnection:
     """Tests for connect / disconnect lifecycle."""
 
     async def test_initial_status_is_disconnected(self) -> None:
+        """New client starts disconnected."""
         client = BridgeClient()
         assert client.status == BridgeStatus.DISCONNECTED
 
-    async def test_connect_changes_status(self, bridge_env) -> None:
-        _, client = bridge_env
-        assert client.status == BridgeStatus.CONNECTED
+    async def test_connect_changes_status(self, mock_ctx: MagicMock) -> None:
+        """Connecting sets status to CONNECTED."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient()
+            await client.connect()
+            assert client.status == BridgeStatus.CONNECTED
+            await client.disconnect()
 
-    async def test_disconnect_changes_status(self, bridge_env) -> None:
-        _, client = bridge_env
+    async def test_disconnect_changes_status(self, connected_client) -> None:
+        """Disconnecting sets status to DISCONNECTED."""
+        client, _, _ = connected_client
         await client.disconnect()
         assert client.status == BridgeStatus.DISCONNECTED
 
-    async def test_double_connect_is_idempotent(self, bridge_env) -> None:
-        _, client = bridge_env
-        await client.connect()  # second call
+    async def test_double_connect_is_idempotent(self, connected_client) -> None:
+        """Calling connect when already connected is a no-op."""
+        client, _, _ = connected_client
+        await client.connect()
         assert client.status == BridgeStatus.CONNECTED
 
 
 class TestBridgeClientSendCommand:
     """Tests for send_command and message serialization."""
 
-    async def test_send_command_roundtrip(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
+    async def test_send_command_roundtrip(self, connected_client) -> None:
+        """Command is sent and response received."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "test-id",
             "success": True,
             "data": {"moved": True},
             "error": None,
@@ -174,31 +125,37 @@ class TestBridgeClientSendCommand:
 
         assert resp["success"] is True
         assert resp["data"]["moved"] is True
+        cmd_mock.send_string.assert_awaited_once()
 
-    async def test_command_is_json_serialized(self, bridge_env) -> None:
-        server, client = bridge_env
+    async def test_command_is_json_serialized(self, connected_client) -> None:
+        """Sent payload is valid JSON matching the command."""
+        client, cmd_mock, _ = connected_client
+
         cmd = BridgeCommand(action="chat", params={"message": "hello"})
         await client.send_command(cmd)
 
-        assert len(server.received_commands) == 1
-        received = server.received_commands[0]
-        assert received["action"] == "chat"
-        assert received["params"]["message"] == "hello"
+        payload_str = cmd_mock.send_string.call_args[0][0]
+        payload = json.loads(payload_str)
+        assert payload["action"] == "chat"
+        assert payload["params"]["message"] == "hello"
 
-    async def test_command_preserves_id(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
+    async def test_command_preserves_id(self, connected_client) -> None:
+        """Response ID matches the command ID."""
+        client, cmd_mock, _ = connected_client
+
+        cmd = BridgeCommand(action="ping", params={})
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": str(cmd.id),
             "success": True,
             "data": {},
             "error": None,
         })
 
-        cmd = BridgeCommand(action="ping", params={})
         resp = await client.send_command(cmd)
         assert resp["id"] == str(cmd.id)
 
     async def test_send_command_when_disconnected_raises(self) -> None:
+        """Sending a command on a disconnected client raises ConnectionError."""
         client = BridgeClient()
         cmd = BridgeCommand(action="ping", params={})
         with pytest.raises(ConnectionError):
@@ -208,135 +165,183 @@ class TestBridgeClientSendCommand:
 class TestBridgeClientTimeout:
     """Tests for timeout and retry behaviour."""
 
-    async def test_timeout_raises_after_retries(self) -> None:
-        """Client should raise TimeoutError when server never responds."""
-        # Connect to an address where nothing is listening
-        client = BridgeClient(
-            command_url="tcp://127.0.0.1:19999",
-            event_url="tcp://127.0.0.1:19998",
-            timeout_ms=200,
-        )
-        ctx = zmq.asyncio.Context()
-        # We need a dummy REP that never responds -> just don't create one
-        # The REQ socket will timeout waiting for a reply.
-        # But first we need to connect
-        await client.connect()
+    async def test_timeout_raises_after_retries(self, connected_client) -> None:
+        """Client raises TimeoutError after MAX_RETRIES zmq.Again errors."""
+        client, cmd_mock, _ = connected_client
+
+        # Make the current socket and all reconnect-created sockets fail
+        cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+        # Override _reconnect_cmd_socket to just reset the same failing mock
+        async def fake_reconnect() -> None:
+            client._cmd_socket = cmd_mock
+            client._status = BridgeStatus.CONNECTED
+
+        client._reconnect_cmd_socket = fake_reconnect
+
+        cmd = BridgeCommand(action="ping", params={})
+        with pytest.raises(TimeoutError, match="timed out after"):
+            await client.send_command(cmd)
+
+    async def test_timeout_triggers_reconnect(self, connected_client) -> None:
+        """On timeout, client transitions through RECONNECTING status."""
+        client, cmd_mock, _ = connected_client
+
+        cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+        statuses: list[BridgeStatus] = []
+
+        async def tracking_reconnect() -> None:
+            statuses.append(client.status)
+            client._cmd_socket = cmd_mock
+            client._status = BridgeStatus.CONNECTED
+
+        client._reconnect_cmd_socket = tracking_reconnect
 
         cmd = BridgeCommand(action="ping", params={})
         with pytest.raises(TimeoutError):
             await client.send_command(cmd)
 
-        await client.disconnect()
+        assert BridgeStatus.RECONNECTING in statuses
 
 
 class TestPing:
     """Tests for the ping health check."""
 
-    async def test_ping_success(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
+    async def test_ping_success(self, connected_client) -> None:
+        """Ping returns True when bridge responds with success=True."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "x",
             "success": True,
             "data": {"pong": True},
             "error": None,
         })
-        result = await client.ping()
-        assert result is True
+        assert await client.ping() is True
 
-    async def test_ping_returns_false_on_failure(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
+    async def test_ping_returns_false_on_failure(self, connected_client) -> None:
+        """Ping returns False when bridge responds with success=False."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "x",
             "success": False,
             "data": {},
             "error": "unhealthy",
         })
-        result = await client.ping()
-        assert result is False
+        assert await client.ping() is False
+
+    async def test_ping_returns_false_on_timeout(self, connected_client) -> None:
+        """Ping returns False on TimeoutError."""
+        client, cmd_mock, _ = connected_client
+
+        cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+        async def fake_reconnect() -> None:
+            client._cmd_socket = cmd_mock
+            client._status = BridgeStatus.CONNECTED
+
+        client._reconnect_cmd_socket = fake_reconnect
+
+        assert await client.ping() is False
 
 
 class TestConvenienceMethods:
     """Tests for move_to, mine_block, craft_item, chat, get_position, get_inventory."""
 
-    async def test_move_to(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
-            "success": True,
-            "data": {"x": 10, "y": 64, "z": -5},
-            "error": None,
+    async def test_move_to(self, connected_client) -> None:
+        """move_to sends a 'move' action with x/y/z params."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "x", "success": True, "data": {"x": 10, "y": 64, "z": -5}, "error": None,
         })
         resp = await client.move_to(10, 64, -5)
         assert resp["data"]["x"] == 10
-        assert server.received_commands[-1]["action"] == "move"
-        assert server.received_commands[-1]["params"]["x"] == 10
 
-    async def test_mine_block(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
-            "success": True,
-            "data": {"mined": "stone"},
-            "error": None,
-        })
-        resp = await client.mine_block(5, 60, 5)
-        assert server.received_commands[-1]["action"] == "mine"
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "move"
+        assert payload["params"] == {"x": 10, "y": 64, "z": -5}
 
-    async def test_craft_item(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
-            "success": True,
-            "data": {"crafted": "planks"},
-            "error": None,
-        })
-        resp = await client.craft_item("planks", 4)
-        assert server.received_commands[-1]["action"] == "craft"
-        assert server.received_commands[-1]["params"]["item"] == "planks"
-        assert server.received_commands[-1]["params"]["count"] == 4
+    async def test_mine_block(self, connected_client) -> None:
+        """mine_block sends a 'mine' action."""
+        client, cmd_mock, _ = connected_client
+        await client.mine_block(5, 60, 5)
 
-    async def test_chat(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
-            "success": True,
-            "data": {"sent": "hello"},
-            "error": None,
-        })
-        resp = await client.chat("hello")
-        assert server.received_commands[-1]["action"] == "chat"
-        assert server.received_commands[-1]["params"]["message"] == "hello"
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "mine"
+        assert payload["params"] == {"x": 5, "y": 60, "z": 5}
 
-    async def test_get_position(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
-            "success": True,
-            "data": {"x": 1.5, "y": 65.0, "z": -2.3},
-            "error": None,
+    async def test_craft_item(self, connected_client) -> None:
+        """craft_item sends a 'craft' action with item and count."""
+        client, cmd_mock, _ = connected_client
+        await client.craft_item("planks", 4)
+
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "craft"
+        assert payload["params"]["item"] == "planks"
+        assert payload["params"]["count"] == 4
+
+    async def test_chat(self, connected_client) -> None:
+        """chat sends a 'chat' action with the message."""
+        client, cmd_mock, _ = connected_client
+        await client.chat("hello world")
+
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "chat"
+        assert payload["params"]["message"] == "hello world"
+
+    async def test_get_position(self, connected_client) -> None:
+        """get_position sends a 'get_position' action."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "x", "success": True, "data": {"x": 1.5, "y": 65.0, "z": -2.3}, "error": None,
         })
         resp = await client.get_position()
         assert resp["data"]["y"] == 65.0
-        assert server.received_commands[-1]["action"] == "get_position"
 
-    async def test_get_inventory(self, bridge_env) -> None:
-        server, client = bridge_env
-        server.set_response(lambda cmd: {
-            "id": cmd["id"],
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "get_position"
+
+    async def test_get_inventory(self, connected_client) -> None:
+        """get_inventory sends a 'get_inventory' action."""
+        client, cmd_mock, _ = connected_client
+        cmd_mock.recv_json = AsyncMock(return_value={
+            "id": "x",
             "success": True,
             "data": {"items": [{"name": "dirt", "count": 64}]},
             "error": None,
         })
         resp = await client.get_inventory()
         assert resp["data"]["items"][0]["name"] == "dirt"
-        assert server.received_commands[-1]["action"] == "get_inventory"
+
+        payload = json.loads(cmd_mock.send_string.call_args[0][0])
+        assert payload["action"] == "get_inventory"
 
 
 class TestEventListener:
     """Tests for the PUB/SUB event listener."""
 
-    async def test_event_listener_receives_events(self, bridge_env) -> None:
-        server, client = bridge_env
+    async def test_event_listener_receives_events(self, connected_client) -> None:
+        """Listener calls callback with parsed BridgeEvent."""
+        client, _, sub_mock = connected_client
+
+        event_data = {
+            "event_type": "perception",
+            "data": {"position": {"x": 0, "y": 64, "z": 0}},
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+
+        # Make recv_json return the event once then block forever
+        call_count = 0
+
+        async def recv_once() -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return event_data
+            # Block until cancelled
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = recv_once
 
         received: list[BridgeEvent] = []
 
@@ -344,25 +349,14 @@ class TestEventListener:
             received.append(event)
 
         await client.start_event_listener(on_event)
-
-        # Give the SUB socket a moment to subscribe
         await asyncio.sleep(0.1)
 
-        event_data = {
-            "event_type": "perception",
-            "data": {"position": {"x": 0, "y": 64, "z": 0}},
-            "timestamp": "2026-01-01T00:00:00Z",
-        }
-        await server.publish_event(event_data)
-
-        # Wait for the event to arrive
-        await asyncio.sleep(0.2)
-
-        assert len(received) >= 1
+        assert len(received) == 1
         assert received[0].event_type == "perception"
         assert received[0].data["position"]["x"] == 0
 
     async def test_event_listener_requires_connection(self) -> None:
+        """Starting event listener on disconnected client raises ConnectionError."""
         client = BridgeClient()
 
         async def on_event(event: BridgeEvent) -> None:
@@ -376,19 +370,39 @@ class TestBridgeTypes:
     """Tests for bridge type definitions."""
 
     def test_bridge_status_values(self) -> None:
+        """BridgeStatus enum has expected string values."""
         assert BridgeStatus.CONNECTED == "connected"
         assert BridgeStatus.DISCONNECTED == "disconnected"
         assert BridgeStatus.RECONNECTING == "reconnecting"
 
     def test_bridge_command_defaults(self) -> None:
+        """BridgeCommand has sensible defaults."""
         cmd = BridgeCommand(action="ping")
         assert cmd.action == "ping"
         assert cmd.params == {}
         assert cmd.timeout_ms == 5000
         assert cmd.id is not None
 
+    def test_bridge_command_serialization(self) -> None:
+        """BridgeCommand serializes to valid JSON."""
+        cmd = BridgeCommand(action="move", params={"x": 1, "y": 2, "z": 3})
+        data = json.loads(cmd.model_dump_json())
+        assert data["action"] == "move"
+        assert data["params"]["x"] == 1
+
     def test_bridge_event_creation(self) -> None:
+        """BridgeEvent can be created with event_type and data."""
         event = BridgeEvent(event_type="chat", data={"msg": "hi"})
         assert event.event_type == "chat"
         assert event.data["msg"] == "hi"
         assert event.timestamp is not None
+
+    def test_bridge_event_validation(self) -> None:
+        """BridgeEvent can be created from a raw dict."""
+        raw = {
+            "event_type": "death",
+            "data": {},
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+        event = BridgeEvent.model_validate(raw)
+        assert event.event_type == "death"

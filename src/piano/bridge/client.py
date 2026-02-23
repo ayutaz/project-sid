@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from typing import Any, Callable, Coroutine
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine
 
 import zmq
 import zmq.asyncio
@@ -89,20 +92,18 @@ class BridgeClient:
         """Disconnect from the bridge process and clean up resources."""
         if self._event_task and not self._event_task.done():
             self._event_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._event_task
-            except asyncio.CancelledError:
-                pass
             self._event_task = None
 
         if self._cmd_socket:
-            self._cmd_socket.close()
+            self._cmd_socket.close(linger=0)
             self._cmd_socket = None
         if self._sub_socket:
-            self._sub_socket.close()
+            self._sub_socket.close(linger=0)
             self._sub_socket = None
         if self._ctx:
-            self._ctx.term()
+            self._ctx.destroy(linger=0)
             self._ctx = None
 
         self._status = BridgeStatus.DISCONNECTED
@@ -152,7 +153,7 @@ class BridgeClient:
                     self._status = BridgeStatus.DISCONNECTED
                     raise TimeoutError(
                         f"Bridge command '{cmd.action}' timed out after {MAX_RETRIES} retries"
-                    )
+                    ) from None
 
         # Unreachable but makes type checkers happy
         raise TimeoutError("Bridge command failed")  # pragma: no cover
@@ -160,7 +161,7 @@ class BridgeClient:
     async def _reconnect_cmd_socket(self) -> None:
         """Tear down and recreate the command socket."""
         if self._cmd_socket:
-            self._cmd_socket.close()
+            self._cmd_socket.close(linger=0)
         if self._ctx is None:
             raise ConnectionError("ZMQ context is not available")
         self._cmd_socket = self._ctx.socket(zmq.REQ)
@@ -185,7 +186,7 @@ class BridgeClient:
             raise ConnectionError("Bridge client is not connected")
 
         async def _listen() -> None:
-            assert self._sub_socket is not None  # noqa: S101
+            assert self._sub_socket is not None
             while True:
                 try:
                     raw = await self._sub_socket.recv_json()

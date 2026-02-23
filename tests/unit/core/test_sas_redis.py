@@ -9,7 +9,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 import pytest
 
-from piano.core.sas_redis import RedisSAS, _ACTION_HISTORY_LIMIT, _STM_LIMIT
+from piano.core.sas_redis import _ACTION_HISTORY_LIMIT, _STM_LIMIT, RedisSAS
 from piano.core.types import (
     ActionHistoryEntry,
     GoalData,

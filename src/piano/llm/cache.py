@@ -14,9 +14,8 @@ import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from piano.core.types import LLMRequest, LLMResponse
-
 if TYPE_CHECKING:
+    from piano.core.types import LLMRequest, LLMResponse
     from piano.llm.provider import LLMProvider
 
 

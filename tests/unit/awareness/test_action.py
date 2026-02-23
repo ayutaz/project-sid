@@ -20,7 +20,6 @@ from piano.core.types import (
     SocialData,
 )
 
-
 # ---------------------------------------------------------------------------
 # InMemorySAS -- minimal test double
 # ---------------------------------------------------------------------------
@@ -374,7 +373,7 @@ class TestConsecutiveFailures:
         """Alert is raised on the 3rd consecutive failure."""
         sas._percepts = PerceptData(position={"x": 100, "y": 100, "z": 100})
 
-        for i in range(1, 4):
+        for _ in range(3):
             sas._action_history = [
                 ActionHistoryEntry(
                     action="move",
@@ -419,7 +418,7 @@ class TestConsecutiveFailures:
         """Alert persists for failures beyond the threshold."""
         sas._percepts = PerceptData(position={"x": 100, "y": 100, "z": 100})
 
-        for i in range(1, 6):
+        for _ in range(5):
             sas._action_history = [
                 ActionHistoryEntry(
                     action="move",

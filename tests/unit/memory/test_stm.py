@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -10,7 +10,6 @@ from piano.core.types import MemoryEntry
 from piano.memory.stm import ShortTermMemory
 
 from .conftest import InMemorySAS
-
 
 # --- helpers ---
 
@@ -21,7 +20,7 @@ def _entry(
     importance: float = 0.5,
     age_minutes: float = 0.0,
 ) -> MemoryEntry:
-    ts = datetime.now(timezone.utc) - timedelta(minutes=age_minutes)
+    ts = datetime.now(UTC) - timedelta(minutes=age_minutes)
     return MemoryEntry(
         content=content,
         category=category,

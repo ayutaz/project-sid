@@ -11,15 +11,17 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
-from typing import Any, Protocol
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from piano.cc.broadcast import BroadcastManager, BroadcastResult
 from piano.cc.compression import CompressionResult, TemplateCompressor
 from piano.core.module import Module
-from piano.core.sas import SharedAgentState
 from piano.core.types import CCDecision, LLMRequest, LLMResponse, ModuleResult, ModuleTier
+
+if TYPE_CHECKING:
+    from piano.core.sas import SharedAgentState
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +177,7 @@ class CognitiveController(Module):
 
         return CCDecision(
             cycle_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             summary=compression.text[:200],
             action=data.get("action", "idle"),
             action_params=data.get("action_params", {}),

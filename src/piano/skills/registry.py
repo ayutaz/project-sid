@@ -9,9 +9,11 @@ Reference: docs/implementation/05-minecraft-platform.md Section 3
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 @dataclass(frozen=True)

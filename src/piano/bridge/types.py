@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class BridgeStatus(str, Enum):
+class BridgeStatus(StrEnum):
     """Connection status of the bridge."""
 
     CONNECTED = "connected"

@@ -12,7 +12,6 @@ import pytest
 from piano.core.types import LLMRequest, ModuleTier
 from piano.llm.provider import DEFAULT_MODELS, LiteLLMProvider, LLMProvider
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -222,9 +221,9 @@ class TestRetry:
                 side_effect=RuntimeError("permanent"),
             ),
             patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock),
+            pytest.raises(RuntimeError, match="permanent"),
         ):
-            with pytest.raises(RuntimeError, match="permanent"):
-                await provider.complete(LLMRequest(prompt="hi"))
+            await provider.complete(LLMRequest(prompt="hi"))
 
     @pytest.mark.asyncio
     async def test_exponential_backoff_delays(self) -> None:
@@ -237,9 +236,9 @@ class TestRetry:
                 side_effect=RuntimeError("fail"),
             ),
             patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            pytest.raises(RuntimeError),
         ):
-            with pytest.raises(RuntimeError):
-                await provider.complete(LLMRequest(prompt="hi"))
+            await provider.complete(LLMRequest(prompt="hi"))
 
         # Backoff delays: 2^0=1, 2^1=2 (3rd attempt fails, no sleep after)
         assert mock_sleep.call_count == 2

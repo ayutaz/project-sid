@@ -10,18 +10,19 @@ Reference: docs/implementation/01-system-architecture.md Section 2
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from piano.core.types import (
-    ActionHistoryEntry,
-    AgentId,
-    GoalData,
-    MemoryEntry,
-    PerceptData,
-    PlanData,
-    SelfReflectionData,
-    SocialData,
-)
+if TYPE_CHECKING:
+    from piano.core.types import (
+        ActionHistoryEntry,
+        AgentId,
+        GoalData,
+        MemoryEntry,
+        PerceptData,
+        PlanData,
+        SelfReflectionData,
+        SocialData,
+    )
 
 
 class SharedAgentState(ABC):

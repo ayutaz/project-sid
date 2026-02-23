@@ -10,13 +10,16 @@ Reference: docs/implementation/01-system-architecture.md
 from __future__ import annotations
 
 import asyncio
-from enum import Enum
-from typing import Any
+import contextlib
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from piano.core.module import Module
 from piano.core.types import ModuleResult, ModuleTier
+
+if TYPE_CHECKING:
+    from piano.core.module import Module
 
 logger = structlog.get_logger()
 
@@ -28,7 +31,7 @@ DEFAULT_TIER_INTERVALS: dict[ModuleTier, int] = {
 }
 
 
-class SchedulerState(str, Enum):
+class SchedulerState(StrEnum):
     """Lifecycle state of the scheduler."""
 
     IDLE = "idle"
@@ -187,10 +190,8 @@ class ModuleScheduler:
 
         if self._loop_task is not None:
             self._loop_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._loop_task
-            except asyncio.CancelledError:
-                pass
             self._loop_task = None
 
         # Shutdown all modules
@@ -282,7 +283,7 @@ class ModuleScheduler:
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for module, result in zip(due_modules, results):
+        for module, result in zip(due_modules, results, strict=True):
             if isinstance(result, BaseException):
                 # This shouldn't happen since _run_module catches exceptions,
                 # but handle it defensively.

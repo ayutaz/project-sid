@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-
 
 # --- Agent Identity ---
 
@@ -18,7 +17,7 @@ AgentId = str  # e.g., "agent-001"
 # --- Module Tiers ---
 
 
-class ModuleTier(str, Enum):
+class ModuleTier(StrEnum):
     """Module execution speed tiers (from design doc 01)."""
 
     FAST = "fast"  # non-LLM, <100ms (action awareness, skill exec)

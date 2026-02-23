@@ -14,12 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from piano.core.module import Module
-from piano.core.sas import SharedAgentState
 from piano.core.scheduler import ModuleScheduler, SchedulerState
 
 if TYPE_CHECKING:
-    pass
+    from piano.core.module import Module
+    from piano.core.sas import SharedAgentState
 
 logger = structlog.get_logger()
 
@@ -122,6 +121,8 @@ class Agent:
                     and self._scheduler.state == SchedulerState.RUNNING
                 ):
                     await asyncio.sleep(self._scheduler.tick_interval * 0.5)
+                # Allow the last tick's module executions to complete
+                await asyncio.sleep(self._scheduler.tick_interval)
             else:
                 # Infinite run: wait until stopped externally
                 while self._running and self._scheduler.state == SchedulerState.RUNNING:

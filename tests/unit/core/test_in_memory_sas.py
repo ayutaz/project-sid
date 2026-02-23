@@ -76,9 +76,15 @@ class TestInMemorySAS:
         sas = InMemorySAS()
         snap = await sas.snapshot()
         expected_keys = {
-            "percepts", "goals", "social", "plans",
-            "action_history", "working_memory", "stm",
-            "self_reflection", "cc_decision",
+            "percepts",
+            "goals",
+            "social",
+            "plans",
+            "action_history",
+            "working_memory",
+            "stm",
+            "self_reflection",
+            "cc_decision",
         }
         assert expected_keys == set(snap.keys())
 

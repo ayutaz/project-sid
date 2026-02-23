@@ -5,8 +5,8 @@ from piano.llm.mock import MockLLMProvider
 from piano.llm.provider import DEFAULT_MODELS, LiteLLMProvider, LLMProvider
 
 __all__ = [
-    "CachedLLMProvider",
     "DEFAULT_MODELS",
+    "CachedLLMProvider",
     "LLMCache",
     "LLMProvider",
     "LiteLLMProvider",

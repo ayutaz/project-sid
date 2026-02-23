@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from piano.core.types import BridgeCommand
 from piano.skills.basic import (
     chat,
     craft_item,
@@ -17,6 +16,9 @@ from piano.skills.basic import (
     mine_block,
     move_to,
 )
+
+if TYPE_CHECKING:
+    from piano.core.types import BridgeCommand
 
 
 class MockBridgeClient:

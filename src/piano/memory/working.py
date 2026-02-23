@@ -13,13 +13,12 @@ Reference: docs/implementation/04-memory-system.md Section 4.2.1
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-
-from piano.core.types import MemoryEntry
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
+    from piano.core.types import MemoryEntry
 
 _MAX_CAPACITY = 10
 
@@ -124,7 +123,7 @@ class WorkingMemory:
 
     def _evict_one(self) -> MemoryEntry:
         """Remove and return the entry with the lowest eviction score."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         worst_idx = 0
         worst_score = float("inf")
         for i, entry in enumerate(self._entries):

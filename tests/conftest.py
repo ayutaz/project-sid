@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -99,7 +99,7 @@ def sample_cc_decision() -> CCDecision:
 @pytest.fixture
 def sample_memory_entries() -> list[MemoryEntry]:
     """Sample memory entries for tests."""
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     return [
         MemoryEntry(
             content="Found a village at (200, 64, 300)",

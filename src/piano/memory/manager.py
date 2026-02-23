@@ -9,7 +9,7 @@ Reference: docs/implementation/04-memory-system.md Section 4.8
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from piano.core.module import Module
@@ -55,7 +55,7 @@ class MemoryManager(Module):
             # 1. Ingest latest percepts as a WM entry.
             percepts = await sas.get_percepts()
             percept_entry = MemoryEntry(
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 content=_percepts_summary(percepts),
                 category="perception",
                 importance=0.3,
@@ -83,7 +83,7 @@ class MemoryManager(Module):
             self._wm.bind_sas(sas)
             await self._wm.sync_to_sas()
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return ModuleResult(
                 module_name=self.name,
                 tier=self.tier,
@@ -130,5 +130,5 @@ def _percepts_summary(percepts: object) -> str:
             parts.append(f"nearby={players}")
         parts.append(f"hp={getattr(p, 'health', '?')}")
         return " | ".join(parts) if parts else "no percepts"
-    except Exception:  # noqa: BLE001
+    except Exception:
         return str(percepts)

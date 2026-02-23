@@ -11,11 +11,12 @@ Capacity limits (enforced on write):
 from __future__ import annotations
 
 import json
-from typing import Any
-
-from redis.asyncio import Redis
+from typing import TYPE_CHECKING, Any
 
 from piano.core.sas import SharedAgentState
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 from piano.core.types import (
     ActionHistoryEntry,
     AgentId,

@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from piano.cc.broadcast import BroadcastManager, BroadcastResult
 from piano.cc.controller import CC_SYSTEM_PROMPT, CognitiveController
 from piano.core.types import CCDecision, LLMRequest, LLMResponse, ModuleResult, ModuleTier
-
 
 # -- Helpers / Fixtures -------------------------------------------------------
 

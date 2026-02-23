@@ -9,13 +9,10 @@ Reference: docs/implementation/05-minecraft-platform.md Section 3.2
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from piano.core.types import BridgeCommand
 from piano.skills.registry import SkillRegistry
-
-if TYPE_CHECKING:
-    pass
 
 
 @runtime_checkable

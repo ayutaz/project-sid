@@ -12,10 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from piano.core.types import MemoryEntry
-
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
+    from piano.core.types import MemoryEntry
 
 _DEFAULT_CAPACITY = 100
 

@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from piano.core.module import Module
-from piano.core.sas import SharedAgentState
 from piano.core.types import ActionHistoryEntry, ModuleResult, ModuleTier, PerceptData
+
+if TYPE_CHECKING:
+    from piano.core.sas import SharedAgentState
 
 
 class ActionAwareness(Module):
@@ -188,11 +190,7 @@ class ActionAwareness(Module):
         if not expected_message:
             return False
 
-        for msg in chat_messages:
-            if expected_message in msg.get("text", ""):
-                return True
-
-        return False
+        return any(expected_message in msg.get("text", "") for msg in chat_messages)
 
     # ------------------------------------------------------------------
     # Discrepancy builder

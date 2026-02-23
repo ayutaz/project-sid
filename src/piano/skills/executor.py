@@ -10,16 +10,17 @@ Reference: docs/implementation/05-minecraft-platform.md Section 3
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
 from piano.core.module import Module
 from piano.core.types import ActionHistoryEntry, CCDecision, ModuleResult, ModuleTier
-from piano.skills.registry import SkillRegistry
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
     from piano.skills.basic import BridgeClient
+    from piano.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,8 @@ class SkillExecutor(Module):
         """Cancel the currently running skill task, if any."""
         if self._current_task is not None and not self._current_task.done():
             self._current_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._current_task
-            except asyncio.CancelledError:
-                pass
             self._current_task = None
 
     async def _record_action(
