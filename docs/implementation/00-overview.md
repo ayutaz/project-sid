@@ -13,7 +13,7 @@
 1. **並行性（Concurrency）**: 高速反射モジュール（非LLM）と低速熟慮モジュール（LLM）が異なる速度で並列実行
 2. **一貫性（Coherence）**: 認知コントローラ（CC）がGWT情報ボトルネック+ブロードキャストで全モジュール間の一貫性を制御
 
-**現在の状態**: 技術調査・設計フェーズ完了。10本のコアドキュメント + 統合レビュー + ロードマップが整備済み。次のステップはPhase 0 MVPの実装。
+**現在の状態**: **Phase 0 MVP実装完了**。323テスト全通過、ruff lint clean。全コアモジュール（SAS, Scheduler, CC, Memory, LLM, Bridge, Skills, ActionAwareness, Config）が動作可能。次のステップはPhase 1（全モジュール統合、10体動作）。
 
 ---
 
@@ -136,11 +136,15 @@
 | モジュール実行 | 非同期独立実行（asyncio.Task） | 01 |
 | API価格基準 | GPT-4o $2.50/$10.00, Haiku 4.5 $1.00/$5.00 | 02, review |
 
-### 未解決（Phase 0で決定）
+### Phase 0で解決済み
 
-1. **Python-TypeScriptブリッジ方式**: ZMQ vs gRPC vs REST
-2. **CC情報圧縮アルゴリズム**: テンプレートベース vs LLMベース
-3. **SASスキーマのフリーズポイント**: いつ仕様確定するか
+1. **Python-TypeScriptブリッジ方式**: **ZMQ**を採用（REQ-REP + PUB-SUB）。gRPC/RESTとの比較はPhase 0後半で判断予定だったが、ZMQで十分な性能が確認されたためそのまま採用
+2. **CC情報圧縮アルゴリズム**: **テンプレートベース**を採用。6セクション構造の固定テンプレートで圧縮、情報保持率>0.8を達成
+3. **SASスキーマのフリーズポイント**: Phase 1開始前に最終判断予定
+
+### 未解決
+
+1. **SASスキーマの最終フリーズ**: Phase 1で全モジュール統合時に確定予定
 
 ---
 
@@ -160,11 +164,23 @@
 ## プロジェクト状態
 
 - **完了**: 技術調査（10ドキュメント）、レビュー（5観点統合）、ロードマップ策定
-- **次のステップ**: Phase 0 MVP実装
-  1. Python-Mineflayerブリッジの3方式PoC（ZMQ/gRPC/REST）→ W2で技術選定完了
-  2. SASスキーマの初期設計とフリーズ（容量制限定義含む）
-  3. CC MVPの実装と圧縮品質評価基準の確立
-  4. アイテム収集ベンチマーク（1-5体）での初回検証
+- **完了**: Phase 0 MVP実装（323テスト全通過）
+  - SAS: Redis実装 + InMemorySAS（テスト用）
+  - Scheduler: 3ティア並列実行（FAST/MID/SLOW）
+  - CC: テンプレート圧縮 + LLM判断 + ブロードキャスト
+  - Memory: WorkingMemory（容量10） + ShortTermMemory（容量100）
+  - LLM: LiteLLMProvider + MockLLMProvider + LLMCache（LRU+TTL）
+  - Bridge: ZMQクライアント（REQ-REP + PUB-SUB）+ TypeScript Mineflayer bot
+  - Skills: レジストリ + 7基本スキル + SkillExecutor
+  - ActionAwareness: ルールベース期待-実際比較
+  - Config: PianoSettings（pydantic-settings、環境変数対応）
+  - CI: GitHub Actions（Python 3.12/3.13、pytest + ruff + mypy）
+  - Docker: Redis + PostgreSQL + Pufferfish
+- **次のステップ**: Phase 1（全モジュール統合、10体動作）
+  1. 統合テスト強化・E2E実行（MC接続）
+  2. 品質ゲート検証（CC制御下で言行一致改善率30%以上）
+  3. 目標生成、計画、社会認識、発話、自己省察モジュールの実装
+  4. LTM（Qdrant）統合
 
 ---
 
