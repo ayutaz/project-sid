@@ -72,7 +72,7 @@ function buildHandlers(mcData: McData): Record<string, CommandHandler> {
 
     move: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
-      const movements = new Movements(bot, mcData);
+      const movements = new Movements(bot);
       (bot as any).pathfinder.setMovements(movements);
       (bot as any).pathfinder.setGoal(
         new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z))
