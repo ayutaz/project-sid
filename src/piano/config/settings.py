@@ -51,6 +51,19 @@ class BridgeSettings(BaseModel):
     curve_public_key: str | None = None
     curve_secret_key: str | None = None
     curve_server_key: str | None = None
+    base_command_port: int = 5555
+    base_event_port: int = 5556
+    connect_timeout_s: float = 30.0
+    connect_retry_count: int = 5
+    bot_name_prefix: str = "PIANOBot"
+    perception_interval_ms: int = 1000
+
+    def get_ports_for_index(self, index: int) -> tuple[int, int]:
+        """Return (command_port, event_port) for a given agent index."""
+        return (
+            self.base_command_port + index * 2,
+            self.base_event_port + index * 2,
+        )
 
 
 class MinecraftSettings(BaseModel):

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from piano.core.module import Module
 from piano.core.types import ActionHistoryEntry, CCDecision, ModuleResult, ModuleTier
+from piano.skills.action_mapper import map_action
 
 if TYPE_CHECKING:
     from piano.core.sas import SharedAgentState
@@ -113,7 +114,11 @@ class SkillExecutor(Module):
             decision: The CC decision containing action and action_params.
         """
         action = decision.action
-        if not action or action == "idle":
+
+        # Translate CC action name to skill registry name
+        mapped = map_action(action)
+        if mapped is None:
+            logger.debug("Action '%s' has no skill mapping, skipping", action)
             await self._cancel_current()
             self._last_decision = decision
             return
@@ -123,19 +128,23 @@ class SkillExecutor(Module):
         self._last_decision = decision
 
         # Look up skill
-        if action not in self._registry:
-            logger.warning("Unknown skill '%s', skipping execution", action)
+        if mapped not in self._registry:
+            logger.warning(
+                "Unknown skill '%s' (mapped from action '%s'), skipping execution",
+                mapped,
+                action,
+            )
             await self._record_action(
                 action=action,
                 expected="execute skill",
-                actual="skill not found in registry",
+                actual=f"skill '{mapped}' not found in registry",
                 success=False,
             )
             return
 
         # Launch skill execution as a background task
         self._current_task = asyncio.create_task(
-            self._execute_skill(action, decision.action_params)
+            self._execute_skill(mapped, decision.action_params)
         )
 
     async def _execute_skill(self, action: str, params: dict[str, Any]) -> dict[str, Any]:

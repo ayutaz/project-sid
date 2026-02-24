@@ -3,7 +3,7 @@
 > 概要: PIANOアーキテクチャとマルチエージェント文明シミュレーションの4フェーズ実装計画（12-17ヶ月、35-55人月）
 > 対応論文セクション: 全セクション横断
 > 最終更新: 2026-02-24
-> 進捗: Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ 実装完了/検証待ち → Phase 3 ⬚ 未着手
+> 進捗: Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ 実装完了/検証待ち → E2Eシミュレーション接続 🔄 → Phase 3 ⬚ 未着手
 
 ---
 
@@ -190,6 +190,48 @@ PIANOアーキテクチャの核心的な設計（ステートレスモジュー
 - **review-cost**: ローカルモデル本格導入（Tier2/3の95%以上をローカル化目標） ⏳ 実環境検証待ち
 - **review-testing**: スケーリング負荷テスト ✅ NetworkXベンチマーク実装済、パフォーマンス回帰テスト ✅ PerformanceBenchmark実装済、障害注入テスト ✅ Chaos framework実装済
 - **review-integration**: NetworkXスケーラビリティ対策 ✅ 100体ベンチマーク実装済（P99<10ms確認、igraph移行不要）
+
+---
+
+## E2E Simulation Connection — 🔄 進行中
+
+**期間**: 2-3週間 / **人員**: 2-3人 / **前提**: Phase 2 実装完了
+**目標**: PIANOエージェントとMinecraftサーバー間のE2E接続を確立し、実環境での動作検証を行う。
+
+### 概要
+
+Phase 0-2で実装されたモジュール群を実際のMinecraft環境に接続し、Perception -> Cognition -> Actionループのリアルタイム動作を検証する。Docker Composeによるシミュレーション環境の統合と、CI/CDでのDocker Build検証を含む。
+
+### 成果物
+
+| # | 成果物 | 詳細 | 状態 |
+|---|---|---|---|
+| E-1 | Docker Compose シミュレーション環境 | MC + Redis + Bridge + Agent の統合環境。`docker/docker-compose.sim.yml` | 🔄 進行中 |
+| E-2 | Bridge Multi-bot Launcher | 複数ボットの起動・ポート割当・ヘルスチェック。`bridge/src/launcher.ts` | 🔄 進行中 |
+| E-3 | Bridge Perception Module | ZMQ SUBでの知覚イベント受信・SAS書き込み。`src/piano/bridge/perception.py` | 🔄 進行中 |
+| E-4 | Bridge Manager | マルチボットZMQ接続プール管理。`src/piano/bridge/manager.py` | 🔄 進行中 |
+| E-5 | Simulation Flow Integration Test | MockブリッジでのPerception->CC->Action統合テスト | 🔄 進行中 |
+| E-6 | E2E Simulation Architecture Doc | アーキテクチャドキュメント。`docs/implementation/e2e-simulation.md` | ✅ Done |
+| E-7 | E2E CI Workflow | Docker Build + Integration Test。`.github/workflows/e2e.yml` | ✅ Done |
+
+### マイルストーン
+
+| Week | マイルストーン | 検証基準 | 状態 |
+|---|---|---|---|
+| W1 | Bridge Multi-bot + Perception統合 | 1ボットがMCに接続し知覚イベントをSASに書き込み | 🔄 進行中 |
+| W2 | Single Agent E2E Loop | 1エージェントがPerception->CC->Actionループを実行 | ⬚ 未着手 |
+| W3 | Multi Agent E2E | 5体が同時にシミュレーション環境で動作 | ⬚ 未着手 |
+
+### アーキテクチャ
+
+詳細は [e2e-simulation.md](./e2e-simulation.md) を参照。
+
+```
+PIANO Agent -> Bridge Manager -> ZMQ -> Bridge (TypeScript) -> Minecraft Server
+     ^                                        |
+     |            SAS (Redis)                  |
+     +--- Perception Module <--- ZMQ PUB -----+
+```
 
 ---
 
@@ -390,4 +432,5 @@ LLMの非決定性下での実験再現性を確保するため、以下の多�
 - [00-overview.md](./00-overview.md) — 全体概要
 - [09-evaluation.md](./09-evaluation.md) — 評価・ベンチマーク
 - [10-devops.md](./10-devops.md) — DevOps・運用
+- [e2e-simulation.md](./e2e-simulation.md) — E2Eシミュレーションアーキテクチャ
 - [review-comprehensive.md](./review-comprehensive.md) — 統合レビュー

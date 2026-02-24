@@ -60,6 +60,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Path to config file (.env)",
     )
     parser.add_argument(
+        "--no-bridge",
+        action="store_true",
+        help="Run without bridge connection (mock mode)",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -107,134 +112,147 @@ def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:
         except Exception:
             pass  # fall through to in-memory SAS
 
-    if True:  # in-memory fallback (always used in mock mode)
-        # Fallback: lightweight in-memory SAS for local/mock runs
-        from piano.core.sas import SharedAgentState
-        from piano.core.types import (
-            ActionHistoryEntry,
-            GoalData,
-            MemoryEntry,
-            PerceptData,
-            PlanData,
-            SelfReflectionData,
-            SocialData,
-        )
+    # In-memory fallback (always used in mock mode)
+    from piano.core.sas import SharedAgentState
+    from piano.core.types import (
+        ActionHistoryEntry,
+        GoalData,
+        MemoryEntry,
+        PerceptData,
+        PlanData,
+        SelfReflectionData,
+        SocialData,
+    )
 
-        class _LocalSAS(SharedAgentState):
-            """Minimal in-memory SAS for launcher without Redis."""
+    class _LocalSAS(SharedAgentState):
+        """Minimal in-memory SAS for launcher without Redis."""
 
-            def __init__(self, aid: str) -> None:
-                self._id = aid
-                self._percepts = PerceptData()
-                self._goals = GoalData()
-                self._social = SocialData()
-                self._plans = PlanData()
-                self._actions: list[ActionHistoryEntry] = []
-                self._wm: list[MemoryEntry] = []
-                self._stm: list[MemoryEntry] = []
-                self._reflection = SelfReflectionData()
-                self._cc: dict[str, Any] | None = None
-                self._sections: dict[str, dict[str, Any]] = {}
+        def __init__(self, aid: str) -> None:
+            self._id = aid
+            self._percepts = PerceptData()
+            self._goals = GoalData()
+            self._social = SocialData()
+            self._plans = PlanData()
+            self._actions: list[ActionHistoryEntry] = []
+            self._wm: list[MemoryEntry] = []
+            self._stm: list[MemoryEntry] = []
+            self._reflection = SelfReflectionData()
+            self._cc: dict[str, Any] | None = None
+            self._sections: dict[str, dict[str, Any]] = {}
 
-            @property
-            def agent_id(self) -> str:
-                return self._id
+        @property
+        def agent_id(self) -> str:
+            return self._id
 
-            async def get_percepts(self) -> PerceptData:
-                return self._percepts
+        async def get_percepts(self) -> PerceptData:
+            return self._percepts
 
-            async def update_percepts(self, p: PerceptData) -> None:
-                self._percepts = p
+        async def update_percepts(self, p: PerceptData) -> None:
+            self._percepts = p
 
-            async def get_goals(self) -> GoalData:
-                return self._goals
+        async def get_goals(self) -> GoalData:
+            return self._goals
 
-            async def update_goals(self, g: GoalData) -> None:
-                self._goals = g
+        async def update_goals(self, g: GoalData) -> None:
+            self._goals = g
 
-            async def get_social(self) -> SocialData:
-                return self._social
+        async def get_social(self) -> SocialData:
+            return self._social
 
-            async def update_social(self, s: SocialData) -> None:
-                self._social = s
+        async def update_social(self, s: SocialData) -> None:
+            self._social = s
 
-            async def get_plans(self) -> PlanData:
-                return self._plans
+        async def get_plans(self) -> PlanData:
+            return self._plans
 
-            async def update_plans(self, p: PlanData) -> None:
-                self._plans = p
+        async def update_plans(self, p: PlanData) -> None:
+            self._plans = p
 
-            async def get_action_history(self, limit: int = 50) -> list[ActionHistoryEntry]:
-                return list(reversed(self._actions[-limit:]))
+        async def get_action_history(self, limit: int = 50) -> list[ActionHistoryEntry]:
+            return list(reversed(self._actions[-limit:]))
 
-            async def add_action(self, entry: ActionHistoryEntry) -> None:
-                self._actions.append(entry)
-                self._actions = self._actions[-50:]
+        async def add_action(self, entry: ActionHistoryEntry) -> None:
+            self._actions.append(entry)
+            self._actions = self._actions[-50:]
 
-            async def get_working_memory(self) -> list[MemoryEntry]:
-                return list(self._wm)
+        async def get_working_memory(self) -> list[MemoryEntry]:
+            return list(self._wm)
 
-            async def set_working_memory(self, entries: list[MemoryEntry]) -> None:
-                self._wm = list(entries)
+        async def set_working_memory(self, entries: list[MemoryEntry]) -> None:
+            self._wm = list(entries)
 
-            async def get_stm(self, limit: int = 100) -> list[MemoryEntry]:
-                return list(reversed(self._stm[-limit:]))
+        async def get_stm(self, limit: int = 100) -> list[MemoryEntry]:
+            return list(reversed(self._stm[-limit:]))
 
-            async def add_stm(self, entry: MemoryEntry) -> None:
-                self._stm.append(entry)
-                self._stm = self._stm[-100:]
+        async def add_stm(self, entry: MemoryEntry) -> None:
+            self._stm.append(entry)
+            self._stm = self._stm[-100:]
 
-            async def get_self_reflection(self) -> SelfReflectionData:
-                return self._reflection
+        async def get_self_reflection(self) -> SelfReflectionData:
+            return self._reflection
 
-            async def update_self_reflection(self, r: SelfReflectionData) -> None:
-                self._reflection = r
+        async def update_self_reflection(self, r: SelfReflectionData) -> None:
+            self._reflection = r
 
-            async def get_last_cc_decision(self) -> dict[str, Any] | None:
-                return self._cc
+        async def get_last_cc_decision(self) -> dict[str, Any] | None:
+            return self._cc
 
-            async def set_cc_decision(self, d: dict[str, Any]) -> None:
-                self._cc = d
+        async def set_cc_decision(self, d: dict[str, Any]) -> None:
+            self._cc = d
 
-            async def get_section(self, section: str) -> dict[str, Any]:
-                return dict(self._sections.get(section, {}))
+        async def get_section(self, section: str) -> dict[str, Any]:
+            return dict(self._sections.get(section, {}))
 
-            async def update_section(self, section: str, data: dict[str, Any]) -> None:
-                self._sections[section] = dict(data)
+        async def update_section(self, section: str, data: dict[str, Any]) -> None:
+            self._sections[section] = dict(data)
 
-            async def snapshot(self) -> dict[str, Any]:
-                return {
-                    "percepts": self._percepts.model_dump(),
-                    "goals": self._goals.model_dump(),
-                    "social": self._social.model_dump(),
-                    "plans": self._plans.model_dump(),
-                    "action_history": [e.model_dump() for e in self._actions],
-                    "working_memory": [e.model_dump() for e in self._wm],
-                    "stm": [e.model_dump() for e in self._stm],
-                    "self_reflection": self._reflection.model_dump(),
-                    "cc_decision": self._cc,
-                }
+        async def snapshot(self) -> dict[str, Any]:
+            return {
+                "percepts": self._percepts.model_dump(),
+                "goals": self._goals.model_dump(),
+                "social": self._social.model_dump(),
+                "plans": self._plans.model_dump(),
+                "action_history": [e.model_dump() for e in self._actions],
+                "working_memory": [e.model_dump() for e in self._wm],
+                "stm": [e.model_dump() for e in self._stm],
+                "self_reflection": self._reflection.model_dump(),
+                "cc_decision": self._cc,
+            }
 
-            async def initialize(self) -> None:
-                pass
+        async def initialize(self) -> None:
+            pass
 
-            async def clear(self) -> None:
-                self._percepts = PerceptData()
-                self._goals = GoalData()
-                self._social = SocialData()
-                self._plans = PlanData()
-                self._actions = []
-                self._wm = []
-                self._stm = []
-                self._reflection = SelfReflectionData()
-                self._cc = None
-                self._sections = {}
+        async def clear(self) -> None:
+            self._percepts = PerceptData()
+            self._goals = GoalData()
+            self._social = SocialData()
+            self._plans = PlanData()
+            self._actions = []
+            self._wm = []
+            self._stm = []
+            self._reflection = SelfReflectionData()
+            self._cc = None
+            self._sections = {}
 
-        return _LocalSAS(agent_id)
+    return _LocalSAS(agent_id)
 
 
-def _register_modules(agent: Agent, provider: Any) -> None:
-    """Register standard PIANO modules on an agent."""
+def _register_modules(
+    agent: Agent,
+    provider: Any,
+    bridge: Any | None = None,
+    sas: Any | None = None,
+) -> None:
+    """Register standard PIANO modules on an agent.
+
+    Args:
+        agent: The agent to register modules on.
+        provider: LLM provider instance.
+        bridge: Optional bridge client for Mineflayer communication.
+        sas: SAS instance. Always passed to TalkingModule for utterance storage.
+            When both *bridge* and *sas* are provided, also registers bridge-connected
+            modules: BridgePerceptionModule, SkillExecutor, and ChatBroadcaster.
+    """
     from piano.awareness.action import ActionAwareness
     from piano.cc.controller import CognitiveController
     from piano.goals.generator import GoalGenerationModule
@@ -244,12 +262,39 @@ def _register_modules(agent: Agent, provider: Any) -> None:
     from piano.talking.module import TalkingModule
 
     agent.register_module(ActionAwareness())
-    agent.register_module(CognitiveController(llm=provider))
+
+    cc = CognitiveController(llm=provider)
+    agent.register_module(cc)
+
     agent.register_module(GoalGenerationModule(llm_provider=provider))
     agent.register_module(PlanningModule(llm=provider))
-    agent.register_module(TalkingModule(llm_provider=provider))
+
+    # Always pass sas to TalkingModule so it can store utterances
+    talking = TalkingModule(llm_provider=provider, sas=sas)
+    agent.register_module(talking)
+
     agent.register_module(SelfReflectionModule(llm_provider=provider))
     agent.register_module(SocialAwarenessModule(llm_provider=provider))
+
+    if bridge is not None and sas is not None:
+        from piano.bridge.chat_broadcaster import ChatBroadcaster
+        from piano.bridge.perception import BridgePerceptionModule
+        from piano.skills.action_mapper import create_full_registry
+        from piano.skills.executor import SkillExecutor
+
+        agent.register_module(BridgePerceptionModule(bridge))
+
+        registry = create_full_registry()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas)
+        agent.register_module(executor)
+
+        bm = cc.broadcast_manager
+        bm.register(executor)
+
+        chat_broadcaster = ChatBroadcaster(bridge=bridge, sas=sas)
+        agent.register_module(chat_broadcaster)
+        bm.register(chat_broadcaster)
+        bm.register(talking)
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -269,7 +314,7 @@ async def run(args: argparse.Namespace) -> None:
     tick_interval = settings.agent.tick_interval_ms / 1000.0
 
     if args.agents == 1:
-        await _run_single(args, provider, tick_interval)
+        await _run_single(args, provider, tick_interval, settings=settings)
     else:
         await _run_multi(args, provider, settings, tick_interval)
 
@@ -278,14 +323,43 @@ async def _run_single(
     args: argparse.Namespace,
     provider: Any,
     tick_interval: float,
+    settings: PianoSettings | None = None,
 ) -> None:
     """Run a single-agent simulation."""
     agent_id = "agent-001"
+    use_bridge = not getattr(args, "no_bridge", False)
     sas = _create_sas(agent_id, mock_mode=args.mock_llm)
     scheduler = ModuleScheduler(tick_interval=tick_interval)
     agent = Agent(agent_id=agent_id, sas=sas, scheduler=scheduler)
 
-    _register_modules(agent, provider)
+    bridge_client = None
+    bridge_manager = None
+    if use_bridge:
+        try:
+            from piano.bridge.manager import BridgeManager
+            from piano.config.settings import BridgeSettings
+
+            bridge_settings = settings.bridge if settings else BridgeSettings()
+            bridge_manager = BridgeManager(
+                host=bridge_settings.host,
+                base_command_port=bridge_settings.base_command_port,
+                base_event_port=bridge_settings.base_event_port,
+                connect_timeout_s=bridge_settings.connect_timeout_s,
+                connect_retry_count=bridge_settings.connect_retry_count,
+            )
+            bridge_client = bridge_manager.create_bridge(agent_id, 0)
+            await bridge_manager.connect_all()
+        except Exception:
+            logger.warning("Bridge connection failed, running without bridge")
+            bridge_client = None
+            bridge_manager = None
+
+    _register_modules(
+        agent,
+        provider,
+        bridge=bridge_client,
+        sas=sas,
+    )
 
     await agent.initialize()
     logger.info("single_agent_starting", agent_id=agent_id, max_ticks=args.ticks)
@@ -314,6 +388,9 @@ async def _run_single(
         with contextlib.suppress(asyncio.CancelledError):
             await run_task
 
+    if bridge_manager is not None:
+        await bridge_manager.disconnect_all()
+
     logger.info("single_agent_finished", agent_id=agent_id)
 
 
@@ -335,15 +412,69 @@ async def _run_multi(
         tick_interval=tick_interval,
     )
     mock = args.mock_llm
-    orchestrator = AgentOrchestrator(
-        config,
-        sas_factory=lambda aid: _create_sas(aid, mock_mode=mock),
-    )
+    use_bridge = not getattr(args, "no_bridge", False)
 
+    # Set up bridge manager if needed
+    bridge_manager = None
+    if use_bridge:
+        try:
+            from piano.bridge.manager import BridgeManager
+
+            bridge_settings = settings.bridge
+            bridge_manager = BridgeManager(
+                host=bridge_settings.host,
+                base_command_port=bridge_settings.base_command_port,
+                base_event_port=bridge_settings.base_event_port,
+                connect_timeout_s=bridge_settings.connect_timeout_s,
+                connect_retry_count=bridge_settings.connect_retry_count,
+            )
+        except Exception:
+            logger.warning("Bridge manager creation failed, running without bridge")
+            bridge_manager = None
+
+    # Track SAS instances per agent for bridge registration
+    sas_map: dict[str, Any] = {}
+
+    def _sas_factory(aid: str) -> Any:
+        sas = _create_sas(aid, mock_mode=mock)
+        sas_map[aid] = sas
+        return sas
+
+    orchestrator = AgentOrchestrator(config, sas_factory=_sas_factory)
+
+    # Create agents and optionally bridge clients
+    agents_with_bridges: list[tuple[Agent, Any]] = []
     for i in range(args.agents):
-        agent_config = AgentConfig(agent_id=f"agent-{i + 1:03d}")
+        agent_id = f"agent-{i + 1:03d}"
+        agent_config = AgentConfig(agent_id=agent_id)
         agent = await orchestrator.add_agent(agent_config)
-        _register_modules(agent, provider)
+
+        bridge_client = None
+        if bridge_manager is not None:
+            bridge_client = bridge_manager.create_bridge(agent_id, i)
+
+        agents_with_bridges.append((agent, bridge_client))
+
+    # Connect all bridges first, then register modules
+    bridge_connected = False
+    if bridge_manager is not None:
+        try:
+            await bridge_manager.connect_all()
+            bridge_connected = True
+        except Exception:
+            logger.warning("Bridge connections failed, continuing without bridge")
+
+    # Register modules after bridge connection attempt
+    for agent, bridge_client in agents_with_bridges:
+        if bridge_connected and bridge_client is not None:
+            _register_modules(
+                agent,
+                provider,
+                bridge=bridge_client,
+                sas=sas_map.get(agent.agent_id),
+            )
+        else:
+            _register_modules(agent, provider, sas=sas_map.get(agent.agent_id))
 
     await orchestrator.start_all()
     logger.info("multi_agent_started", agent_count=args.agents)
@@ -359,8 +490,33 @@ async def _run_multi(
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, _signal_handler)
 
+    # If --ticks is set, monitor agent tick counts and stop when all reach the target
+    monitor_task: asyncio.Task[None] | None = None
+    if args.ticks is not None:
+
+        async def _tick_monitor() -> None:
+            max_ticks = args.ticks
+            while not shutdown_event.is_set():
+                stats = await orchestrator.get_all_stats()
+                if all(s["tick_count"] >= max_ticks for s in stats.values()):
+                    logger.info("all_agents_reached_max_ticks", max_ticks=max_ticks)
+                    shutdown_event.set()
+                    return
+                await asyncio.sleep(0.5)
+
+        monitor_task = asyncio.create_task(_tick_monitor())
+
     await shutdown_event.wait()
     await orchestrator.stop_all()
+
+    if monitor_task is not None and not monitor_task.done():
+        monitor_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await monitor_task
+
+    if bridge_manager is not None:
+        await bridge_manager.disconnect_all()
+
     logger.info("multi_agent_finished", agent_count=args.agents)
 
 

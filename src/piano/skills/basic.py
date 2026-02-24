@@ -60,9 +60,7 @@ async def mine_block(bridge: BridgeClient, x: float, y: float, z: float) -> dict
     return await bridge.send_command(cmd)
 
 
-async def craft_item(
-    bridge: BridgeClient, item_name: str, count: int = 1
-) -> dict[str, Any]:
+async def craft_item(bridge: BridgeClient, item_name: str, count: int = 1) -> dict[str, Any]:
     """Craft an item.
 
     Args:

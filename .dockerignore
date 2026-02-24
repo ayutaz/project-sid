@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.pyc
+node_modules
+tests/
+docs/
+benchmarks/
+*.md
+!pyproject.toml
+.github/
+k8s/
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.venv
+*.egg-info

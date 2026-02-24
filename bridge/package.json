@@ -6,7 +6,8 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "build": "tsc",
-    "dev": "ts-node --respawn src/index.ts"
+    "dev": "ts-node --respawn src/index.ts",
+    "launcher": "ts-node src/launcher.ts"
   },
   "dependencies": {
     "mineflayer": "^4.23.0",

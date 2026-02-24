@@ -303,3 +303,47 @@ class TestNestedSettingsModels:
         c = ConsolidationSettings(batch_size=20, min_importance=0.5)
         assert c.batch_size == 20
         assert c.min_importance == 0.5
+
+
+class TestBridgeSettingsExtended:
+    """Test extended BridgeSettings fields and methods."""
+
+    def test_bridge_settings_new_defaults(self) -> None:
+        b = BridgeSettings()
+        assert b.base_command_port == 5555
+        assert b.base_event_port == 5556
+        assert b.connect_timeout_s == 30.0
+        assert b.connect_retry_count == 5
+        assert b.bot_name_prefix == "PIANOBot"
+        assert b.perception_interval_ms == 1000
+
+    def test_bridge_settings_base_ports(self) -> None:
+        b = BridgeSettings()
+        assert b.base_command_port == 5555
+        assert b.base_event_port == 5556
+
+    def test_bridge_settings_connect_timeout(self) -> None:
+        b = BridgeSettings()
+        assert b.connect_timeout_s == 30.0
+
+    def test_bridge_settings_retry_count(self) -> None:
+        b = BridgeSettings()
+        assert b.connect_retry_count == 5
+
+    def test_bridge_settings_bot_prefix(self) -> None:
+        b = BridgeSettings()
+        assert b.bot_name_prefix == "PIANOBot"
+
+    def test_bridge_settings_perception_interval(self) -> None:
+        b = BridgeSettings()
+        assert b.perception_interval_ms == 1000
+
+    def test_bridge_get_ports_for_index(self) -> None:
+        b = BridgeSettings()
+        assert b.get_ports_for_index(0) == (5555, 5556)
+        assert b.get_ports_for_index(3) == (5561, 5562)
+
+    def test_bridge_settings_env_override(self) -> None:
+        with patch.dict(os.environ, {"PIANO_BRIDGE__BASE_COMMAND_PORT": "6000"}):
+            settings = PianoSettings()
+            assert settings.bridge.base_command_port == 6000

@@ -1,6 +1,10 @@
 """Python-Mineflayer bridge for Minecraft interaction."""
 
+from piano.bridge.chat_broadcaster import ChatBroadcaster
 from piano.bridge.client import BridgeClient
+from piano.bridge.health import BridgeHealthMonitor, BridgeHealthResult, BridgeHealthStatus
+from piano.bridge.manager import BridgeManager
+from piano.bridge.perception import BridgePerceptionModule
 from piano.bridge.protocol import (
     BatchCommand,
     CommandType,
@@ -22,7 +26,13 @@ from piano.bridge.velocity import (
 __all__ = [
     "BatchCommand",
     "BridgeClient",
+    "BridgeHealthMonitor",
+    "BridgeHealthResult",
+    "BridgeHealthStatus",
+    "BridgeManager",
+    "BridgePerceptionModule",
     "BridgeStatus",
+    "ChatBroadcaster",
     "CommandType",
     "CommandValidator",
     "EventFilter",

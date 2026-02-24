@@ -1,0 +1,110 @@
+# PIANO Simulation Docker Compose
+# Usage: docker compose -f docker/docker-compose.sim.yml up
+
+services:
+  # Minecraft Server (Pufferfish 1.20.4, flat world for bots)
+  minecraft:
+    image: itzg/minecraft-server:latest
+    environment:
+      EULA: "TRUE"
+      TYPE: "PUFFERFISH"
+      VERSION: "1.20.4"
+      DIFFICULTY: "easy"
+      SPAWN_MONSTERS: "false"
+      ONLINE_MODE: "false"
+      SPAWN_PROTECTION: "0"
+      VIEW_DISTANCE: "8"
+      SIMULATION_DISTANCE: "6"
+      MAX_PLAYERS: "100"
+      LEVEL_TYPE: "flat"
+      SEED: "12345"
+      MEMORY: "2G"
+      # Copy server properties if available
+      OVERRIDE_SERVER_PROPERTIES: "true"
+    ports:
+      - "25565:25565"
+    volumes:
+      - mc-data:/data
+      - ./mc-server/server.properties:/data/server.properties:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    networks:
+      - piano-sim
+
+  # Redis for SAS
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - piano-sim
+
+  # Mineflayer Bridge (multi-bot)
+  bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+    environment:
+      MC_HOST: minecraft
+      MC_PORT: "25565"
+      MC_VERSION: "1.20.4"
+      NUM_BOTS: "${NUM_BOTS:-3}"
+      ZMQ_CMD_PORT: "5555"
+      ZMQ_EVT_PORT: "5556"
+      PERCEPTION_INTERVAL_MS: "1000"
+    command: ["node", "dist/launcher.js"]
+    depends_on:
+      minecraft:
+        condition: service_healthy
+    # Expose port range for multi-bot (5555-5570 covers up to 8 bots)
+    ports:
+      - "5555-5570:5555-5570"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const n=require('net');const c=n.createConnection({port:5555});c.on('connect',()=>{c.end();process.exit(0)});c.on('error',()=>process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    networks:
+      - piano-sim
+
+  # PIANO Agent
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    environment:
+      PIANO_REDIS__HOST: redis
+      PIANO_BRIDGE__HOST: bridge
+      PIANO_BRIDGE__BASE_COMMAND_PORT: "5555"
+      PIANO_BRIDGE__BASE_EVENT_PORT: "5556"
+    command: >
+      uv run piano
+      --agents ${NUM_BOTS:-3}
+      --ticks ${MAX_TICKS:-100}
+      --mock-llm
+    depends_on:
+      redis:
+        condition: service_healthy
+      bridge:
+        condition: service_healthy
+    networks:
+      - piano-sim
+
+volumes:
+  mc-data:
+
+networks:
+  piano-sim:
+    driver: bridge

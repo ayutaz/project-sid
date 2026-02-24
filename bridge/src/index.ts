@@ -6,34 +6,16 @@
  */
 
 import mineflayer, { Bot } from "mineflayer";
+import { Vec3 } from "vec3";
 import { pathfinder, Movements, goals } from "mineflayer-pathfinder";
 import * as zmq from "zeromq";
 import { v4 as uuidv4 } from "uuid";
 
-// ---------------------------------------------------------------------------
-// Configuration from environment
-// ---------------------------------------------------------------------------
-
-const MC_HOST = process.env.MC_HOST ?? "localhost";
-const MC_PORT = parseInt(process.env.MC_PORT ?? "25565", 10);
-const MC_USERNAME = process.env.MC_USERNAME ?? "PIANOBot";
-const MC_VERSION = process.env.MC_VERSION ?? "1.20.4";
-
-const ZMQ_CMD_PORT = parseInt(process.env.ZMQ_CMD_PORT ?? "5555", 10);
-const ZMQ_EVT_PORT = parseInt(process.env.ZMQ_EVT_PORT ?? "5556", 10);
-const ZMQ_CMD_ADDR = `tcp://0.0.0.0:${ZMQ_CMD_PORT}`;
-const ZMQ_EVT_ADDR = `tcp://0.0.0.0:${ZMQ_EVT_PORT}`;
-
-const PERCEPTION_INTERVAL_MS = parseInt(
-  process.env.PERCEPTION_INTERVAL_MS ?? "1000",
-  10
-);
-
-const ZMQ_TLS_ENABLED = process.env.ZMQ_TLS_ENABLED === "true";
-const ZMQ_CURVE_SERVER_PUBLIC_KEY =
-  process.env.ZMQ_CURVE_SERVER_PUBLIC_KEY ?? "";
-const ZMQ_CURVE_SERVER_SECRET_KEY =
-  process.env.ZMQ_CURVE_SERVER_SECRET_KEY ?? "";
+import { getBasicHandlers } from "./handlers/basic";
+import { getSocialHandlers } from "./handlers/social";
+import { getCombatHandlers } from "./handlers/combat";
+import { getAdvancedHandlers } from "./handlers/advanced";
+import { collectPerception } from "./handlers/perception";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,17 +41,31 @@ interface BridgeEvent {
   timestamp: string;
 }
 
-// ---------------------------------------------------------------------------
-// Command handlers
-// ---------------------------------------------------------------------------
-
 type CommandHandler = (
   bot: Bot,
   params: Record<string, any>
 ) => Promise<Record<string, any>>;
 
+export interface BotBridgeConfig {
+  mcHost: string;
+  mcPort: number;
+  mcVersion: string;
+  username: string;
+  zmqCmdPort: number;
+  zmqEvtPort: number;
+  perceptionIntervalMs: number;
+  zmqTlsEnabled?: boolean;
+  zmqCurveServerPublicKey?: string;
+  zmqCurveServerSecretKey?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Command handlers
+// ---------------------------------------------------------------------------
+
 function buildHandlers(): Record<string, CommandHandler> {
   return {
+    // Built-in handlers
     ping: async () => ({ pong: true }),
 
     move: async (bot, params) => {
@@ -82,15 +78,13 @@ function buildHandlers(): Record<string, CommandHandler> {
       );
       // Wait for goal_reached or timeout
       await new Promise<void>((resolve, reject) => {
+        const onGoalReached = () => { clearTimeout(timeout); resolve(); };
         const timeout = setTimeout(() => {
+          bot.removeListener("goal_reached" as any, onGoalReached);
           (bot as any).pathfinder.stop();
           reject(new Error("Movement timed out"));
         }, (params.timeout_ms as number) ?? 30000);
-
-        bot.once("goal_reached" as any, () => {
-          clearTimeout(timeout);
-          resolve();
-        });
+        bot.once("goal_reached" as any, onGoalReached);
       });
       const pos = bot.entity.position;
       return { x: pos.x, y: pos.y, z: pos.z };
@@ -99,7 +93,7 @@ function buildHandlers(): Record<string, CommandHandler> {
     mine: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
       const block = bot.blockAt(
-        (bot as any).vec3(Math.floor(x), Math.floor(y), Math.floor(z))
+        new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
       );
       if (!block) {
         throw new Error(`No block at ${x},${y},${z}`);
@@ -148,21 +142,34 @@ function buildHandlers(): Record<string, CommandHandler> {
       }));
       return { items };
     },
+
+    // Imported handler modules
+    ...getBasicHandlers(),
+    ...getSocialHandlers(),
+    ...getCombatHandlers(),
+    ...getAdvancedHandlers(),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Bridge process
+// Bot-bridge creation (reusable)
 // ---------------------------------------------------------------------------
 
-async function main(): Promise<void> {
-  console.log(`[bridge] Creating bot ${MC_USERNAME} -> ${MC_HOST}:${MC_PORT}`);
+export async function createBotBridge(
+  config: BotBridgeConfig
+): Promise<{ bot: Bot; repSocket: zmq.Reply; pubSocket: zmq.Publisher }> {
+  const zmqCmdAddr = `tcp://0.0.0.0:${config.zmqCmdPort}`;
+  const zmqEvtAddr = `tcp://0.0.0.0:${config.zmqEvtPort}`;
+
+  console.log(
+    `[bridge] Creating bot ${config.username} -> ${config.mcHost}:${config.mcPort}`
+  );
 
   const bot = mineflayer.createBot({
-    host: MC_HOST,
-    port: MC_PORT,
-    username: MC_USERNAME,
-    version: MC_VERSION,
+    host: config.mcHost,
+    port: config.mcPort,
+    username: config.username,
+    version: config.mcVersion,
   });
 
   bot.loadPlugin(pathfinder);
@@ -172,23 +179,25 @@ async function main(): Promise<void> {
   const pubSocket = new zmq.Publisher();
 
   // Configure CurveZMQ if TLS is enabled
-  if (ZMQ_TLS_ENABLED) {
-    console.log("[bridge] CurveZMQ TLS enabled");
+  if (config.zmqTlsEnabled) {
+    if (!config.zmqCurveServerPublicKey || !config.zmqCurveServerSecretKey) {
+      throw new Error("CurveZMQ TLS enabled but keys are not provided");
+    }
+    console.log(`[bridge] CurveZMQ TLS enabled for ${config.username}`);
 
-    // Server-side: the bridge acts as server, clients connect to it
     repSocket.curveServer = true;
-    repSocket.curveSecretKey = ZMQ_CURVE_SERVER_SECRET_KEY;
-    repSocket.curvePublicKey = ZMQ_CURVE_SERVER_PUBLIC_KEY;
+    repSocket.curveSecretKey = config.zmqCurveServerSecretKey ?? "";
+    repSocket.curvePublicKey = config.zmqCurveServerPublicKey ?? "";
 
     pubSocket.curveServer = true;
-    pubSocket.curveSecretKey = ZMQ_CURVE_SERVER_SECRET_KEY;
-    pubSocket.curvePublicKey = ZMQ_CURVE_SERVER_PUBLIC_KEY;
+    pubSocket.curveSecretKey = config.zmqCurveServerSecretKey ?? "";
+    pubSocket.curvePublicKey = config.zmqCurveServerPublicKey ?? "";
   }
 
-  await repSocket.bind(ZMQ_CMD_ADDR);
-  await pubSocket.bind(ZMQ_EVT_ADDR);
-  console.log(`[bridge] ZMQ REP bound on ${ZMQ_CMD_ADDR}`);
-  console.log(`[bridge] ZMQ PUB bound on ${ZMQ_EVT_ADDR}`);
+  await repSocket.bind(zmqCmdAddr);
+  await pubSocket.bind(zmqEvtAddr);
+  console.log(`[bridge] ZMQ REP bound on ${zmqCmdAddr}`);
+  console.log(`[bridge] ZMQ PUB bound on ${zmqEvtAddr}`);
 
   const handlers = buildHandlers();
 
@@ -224,7 +233,13 @@ async function main(): Promise<void> {
       }
 
       try {
-        const data = await handler(bot, cmd.params);
+        const timeoutMs = cmd.timeout_ms ?? 30000;
+        const data = await Promise.race([
+          handler(bot, cmd.params),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Command '${cmd.action}' timed out after ${timeoutMs}ms`)), timeoutMs)
+          ),
+        ]);
         await repSocket.send(
           JSON.stringify({
             id: cmd.id,
@@ -247,34 +262,16 @@ async function main(): Promise<void> {
   })();
 
   // -- Perception event publisher ------------------------------------------
+  let perceptionInterval: ReturnType<typeof setInterval> | null = null;
   bot.once("spawn", () => {
-    console.log(`[bridge] Bot spawned at ${bot.entity.position}`);
+    console.log(`[bridge] Bot ${config.username} spawned at ${bot.entity.position}`);
 
-    setInterval(async () => {
-      const nearbyPlayers = Object.values(bot.entities)
-        .filter(
-          (e) =>
-            e.type === "player" &&
-            e.username !== bot.username &&
-            e.position.distanceTo(bot.entity.position) < 32
-        )
-        .map((e) => ({
-          name: e.username,
-          distance: Math.round(e.position.distanceTo(bot.entity.position)),
-          position: { x: e.position.x, y: e.position.y, z: e.position.z },
-        }));
+    perceptionInterval = setInterval(async () => {
+      const perception = collectPerception(bot);
 
-      const pos = bot.entity.position;
       const event: BridgeEvent = {
         event_type: "perception",
-        data: {
-          position: { x: pos.x, y: pos.y, z: pos.z },
-          health: bot.health,
-          food: bot.food,
-          nearby_players: nearbyPlayers,
-          time_of_day: bot.time.timeOfDay,
-          is_raining: bot.isRaining,
-        },
+        data: perception,
         timestamp: new Date().toISOString(),
       };
 
@@ -283,7 +280,7 @@ async function main(): Promise<void> {
       } catch {
         // PUB is non-blocking; ignore send errors
       }
-    }, PERCEPTION_INTERVAL_MS);
+    }, config.perceptionIntervalMs);
   });
 
   // -- Game events -> PUB --------------------------------------------------
@@ -315,16 +312,49 @@ async function main(): Promise<void> {
   });
 
   bot.on("error", (err) => {
-    console.error(`[bridge] Bot error: ${err.message}`);
+    console.error(`[bridge] Bot ${config.username} error: ${err.message}`);
   });
 
   bot.on("end", (reason) => {
-    console.log(`[bridge] Bot disconnected: ${reason}`);
+    if (perceptionInterval) clearInterval(perceptionInterval);
+    console.log(`[bridge] Bot ${config.username} disconnected: ${reason}`);
+  });
+
+  return { bot, repSocket, pubSocket };
+}
+
+// ---------------------------------------------------------------------------
+// Single-bot entry point (backward compatible)
+// ---------------------------------------------------------------------------
+
+async function main(): Promise<void> {
+  const config: BotBridgeConfig = {
+    mcHost: process.env.MC_HOST ?? "localhost",
+    mcPort: parseInt(process.env.MC_PORT ?? "25565", 10),
+    mcVersion: process.env.MC_VERSION ?? "1.20.4",
+    username: process.env.MC_USERNAME ?? "PIANOBot",
+    zmqCmdPort: parseInt(process.env.ZMQ_CMD_PORT ?? "5555", 10),
+    zmqEvtPort: parseInt(process.env.ZMQ_EVT_PORT ?? "5556", 10),
+    perceptionIntervalMs: parseInt(
+      process.env.PERCEPTION_INTERVAL_MS ?? "1000",
+      10
+    ),
+    zmqTlsEnabled: process.env.ZMQ_TLS_ENABLED === "true",
+    zmqCurveServerPublicKey: process.env.ZMQ_CURVE_SERVER_PUBLIC_KEY ?? "",
+    zmqCurveServerSecretKey: process.env.ZMQ_CURVE_SERVER_SECRET_KEY ?? "",
+  };
+
+  const { bot } = await createBotBridge(config);
+
+  // In single-bot mode, exit on disconnect (backward compatible behavior)
+  bot.on("end", () => {
     process.exit(1);
   });
 }
 
-main().catch((err) => {
-  console.error("[bridge] Fatal error:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[bridge] Fatal error:", err);
+    process.exit(1);
+  });
+}

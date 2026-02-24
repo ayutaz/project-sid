@@ -1,0 +1,22 @@
+# PIANO Agent Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Copy project files
+COPY pyproject.toml uv.lock ./
+COPY src/ src/
+
+# Install dependencies
+RUN uv sync --no-dev --frozen
+
+# Create non-root user
+RUN useradd --create-home appuser
+USER appuser
+
+# Default command
+ENTRYPOINT ["uv", "run", "piano"]
+CMD ["--agents", "1", "--ticks", "100", "--mock-llm"]

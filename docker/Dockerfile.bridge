@@ -1,0 +1,24 @@
+# PIANO Bridge Dockerfile (Mineflayer + ZMQ)
+FROM node:20-slim
+
+WORKDIR /app
+
+# Copy package files
+COPY bridge/package.json bridge/package-lock.json* ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY bridge/src/ src/
+COPY bridge/tsconfig.json ./
+
+# Compile TypeScript
+RUN npx tsc
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+USER appuser
+
+# Default command (single bot, use launcher for multi-bot)
+CMD ["node", "dist/index.js"]
