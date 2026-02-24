@@ -190,8 +190,8 @@ class ModelRouter:
 
     # Default fallback chains per tier (as per 02-llm-integration.md)
     DEFAULT_FALLBACK_CHAINS: ClassVar[dict[ModuleTier, list[str]]] = {
-        ModuleTier.SLOW: ["gpt-4o", "claude-sonnet-4-5-20250929", "gpt-4o-mini"],
-        ModuleTier.MID: ["gpt-4o-mini", "claude-haiku-4-5-20251001"],
+        ModuleTier.SLOW: ["gpt-4o", "gpt-4o-mini"],
+        ModuleTier.MID: ["gpt-4o-mini"],
         ModuleTier.FAST: ["gpt-4o-mini"],
     }
 

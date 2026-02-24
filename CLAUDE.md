@@ -16,7 +16,7 @@ src/piano/                  # PIANOアーキテクチャ実装
   core/                     # 型定義、Module ABC、SAS ABC/Redis実装、Scheduler、Agent、Checkpoint、Orchestrator、DistributedCheckpoint
   cc/                       # 認知コントローラ（圧縮、ブロードキャスト、コントローラ）
   memory/                   # 記憶システム（WM、STM、Manager、LTM、LTM Search、Consolidation）
-  llm/                      # LLM抽象化（LiteLLM、Mock、Cache、Tiering、Gateway、Local、MultiProvider、PromptCache）
+  llm/                      # LLM抽象化（OpenAI SDK、Mock、Cache、Tiering、Gateway、PromptCache）
   bridge/                   # ZMQブリッジ（client、perception、chat_broadcaster、manager、health、protocol、velocity）
   skills/                   # スキルレジストリ、基本/社会/高度スキル、エグゼキュータ、ActionMapper
   awareness/                # 行動認識モジュール、NN予測モデル、トレーナー
@@ -93,7 +93,7 @@ docker compose -f docker/docker-compose.yml up -d
 - **Python**: 3.12+、パッケージマネージャは **uv**（`uv add` でパッケージ追加）
 - **フレームワーク**: asyncio、Pydantic 2.0、pydantic-settings
 - **共有状態**: Redis 7+（fakeredisでテスト、TLS/SSL対応）
-- **LLM**: LiteLLM（マルチプロバイダ対応）+ Local LLM（Ollama/vLLM）
+- **LLM**: OpenAI SDK（OpenAI API専用）
 - **記憶**: Qdrant（LTM ベクトル検索、HTTPS/API Key対応）
 - **社会グラフ**: NetworkX（DiGraph）
 - **ブリッジ**: ZMQ（REQ-REP + PUB-SUB、CurveZMQ TLS対応）

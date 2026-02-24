@@ -99,14 +99,6 @@ class QdrantSettings(BaseModel):
     api_key: str | None = None
 
 
-class LocalLLMSettings(BaseModel):
-    """Local LLM inference server settings."""
-
-    provider: str = "ollama"  # "ollama" or "vllm"
-    url: str = "http://localhost:11434"
-    model: str = "llama3"
-    timeout: float = 30.0
-
 
 class CheckpointSettings(BaseModel):
     """Agent state checkpoint settings."""
@@ -175,11 +167,6 @@ class PromptCacheSettings(BaseModel):
     enable_semantic: bool = True
 
 
-class MultiProviderSettings(BaseModel):
-    """Multi-provider LLM router settings."""
-
-    routing_strategy: str = "weighted_round_robin"
-
 
 class PianoSettings(BaseSettings):
     """Root settings for the PIANO system.
@@ -210,7 +197,7 @@ class PianoSettings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     log: LogSettings = Field(default_factory=LogSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
-    local_llm: LocalLLMSettings = Field(default_factory=LocalLLMSettings)
+
     checkpoint: CheckpointSettings = Field(default_factory=CheckpointSettings)
     consolidation: ConsolidationSettings = Field(default_factory=ConsolidationSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
@@ -218,7 +205,6 @@ class PianoSettings(BaseSettings):
     velocity: VelocitySettings = Field(default_factory=VelocitySettings)
     resource_limiter: ResourceLimiterSettings = Field(default_factory=ResourceLimiterSettings)
     prompt_cache: PromptCacheSettings = Field(default_factory=PromptCacheSettings)
-    multi_provider: MultiProviderSettings = Field(default_factory=MultiProviderSettings)
 
 
 def get_settings(**overrides: object) -> PianoSettings:

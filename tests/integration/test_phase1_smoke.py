@@ -85,15 +85,6 @@ def test_import_llm_tiering():
 
 
 @pytest.mark.integration
-def test_import_llm_local():
-    """Test that local LLM provider module can be imported."""
-    try:
-        from piano.llm import local  # noqa: F401
-    except ImportError:
-        pytest.skip("llm.local not yet implemented")
-
-
-@pytest.mark.integration
 def test_import_core_checkpoint():
     """Test that checkpoint module can be imported."""
     try:
@@ -246,21 +237,6 @@ async def test_llm_tiering_configuration():
         pytest.skip("TieringConfig not yet implemented")
     except Exception as e:
         pytest.fail(f"TieringConfig instantiation failed: {e}")
-
-
-@pytest.mark.integration
-async def test_local_llm_provider_instantiation():
-    """Test that LocalLLMProvider can be instantiated."""
-    try:
-        from piano.llm.local import LocalLLMProvider
-
-        provider = LocalLLMProvider(model_name="llama3.2:1b")
-        assert provider is not None
-        assert hasattr(provider, "generate")
-    except ImportError:
-        pytest.skip("LocalLLMProvider not yet implemented")
-    except Exception as e:
-        pytest.fail(f"LocalLLMProvider instantiation failed: {e}")
 
 
 @pytest.mark.integration

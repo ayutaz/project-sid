@@ -46,10 +46,6 @@ class TestPhase2Imports:
     # -- llm --
 
     @pytest.mark.integration
-    def test_import_llm_multi_provider(self):
-        from piano.llm.multi_provider import MultiProviderRouter  # noqa: F401
-
-    @pytest.mark.integration
     def test_import_llm_prompt_cache(self):
         from piano.llm.prompt_cache import PromptCacheManager  # noqa: F401
 
@@ -135,13 +131,6 @@ class TestPhase2Instantiation:
         mgr = ShardManager()
         assert mgr.num_shards == 4
         assert mgr.agent_count == 0
-
-    @pytest.mark.integration
-    def test_multi_provider_router_default(self):
-        from piano.llm.multi_provider import MultiProviderRouter, RoutingStrategy
-
-        router = MultiProviderRouter()
-        assert router.strategy == RoutingStrategy.WEIGHTED_ROUND_ROBIN
 
     @pytest.mark.integration
     def test_prompt_cache_manager_default(self):

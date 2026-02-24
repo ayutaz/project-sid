@@ -1,6 +1,6 @@
 """LLM provider abstraction layer.
 
-Defines the LLMProvider protocol and a concrete LiteLLM-based implementation
+Defines the LLMProvider protocol and a concrete OpenAI-based implementation
 with retry logic, timeout handling, and cost tracking.
 
 Reference: docs/implementation/02-llm-integration.md
@@ -14,7 +14,7 @@ import time
 from collections import deque
 from typing import Protocol, runtime_checkable
 
-import litellm
+from openai import AsyncOpenAI
 
 from piano.core.types import LLMRequest, LLMResponse, ModuleTier
 
@@ -42,6 +42,15 @@ DEFAULT_MODELS: dict[ModuleTier, str] = {
     ModuleTier.SLOW: "gpt-4o",
 }
 
+# Static cost table: model -> (cost_per_1k_input, cost_per_1k_output)
+_OPENAI_COSTS: dict[str, tuple[float, float]] = {
+    "gpt-4o": (0.0025, 0.010),
+    "gpt-4o-mini": (0.000150, 0.000600),
+    "gpt-4.1": (0.002, 0.008),
+    "gpt-4.1-mini": (0.0004, 0.0016),
+    "gpt-4.1-nano": (0.0001, 0.0004),
+}
+
 
 @runtime_checkable
 class LLMProvider(Protocol):
@@ -57,11 +66,10 @@ class LLMProvider(Protocol):
         ...
 
 
-class LiteLLMProvider:
-    """LLM provider backed by litellm.
+class OpenAIProvider:
+    """LLM provider backed by the OpenAI SDK.
 
-    Supports all models that litellm supports (OpenAI, Anthropic, Google, etc.)
-    with automatic retry and exponential backoff.
+    Supports OpenAI models with automatic retry and exponential backoff.
     """
 
     def __init__(
@@ -72,6 +80,7 @@ class LiteLLMProvider:
         timeout_seconds: float = 30.0,
         cost_limit_usd: float = 100.0,
         calls_per_minute_limit: int = 100,
+        api_key: str | None = None,
     ) -> None:
         """Initialise the provider.
 
@@ -81,6 +90,7 @@ class LiteLLMProvider:
             timeout_seconds: Per-request timeout in seconds.
             cost_limit_usd: Maximum allowed cost in USD before raising CostLimitExceededError.
             calls_per_minute_limit: Maximum calls per minute before raising RateLimitExceededError.
+            api_key: Optional OpenAI API key. If None, uses OPENAI_API_KEY env var.
         """
         self.default_models = default_models or dict(DEFAULT_MODELS)
         self.max_retries = max_retries
@@ -90,6 +100,7 @@ class LiteLLMProvider:
         self._total_cost_usd: float = 0.0
         self._call_count: int = 0
         self._call_timestamps: deque[float] = deque()
+        self._client = AsyncOpenAI(api_key=api_key, timeout=timeout_seconds)
 
     def _resolve_model(self, request: LLMRequest) -> str:
         """Return the model string, falling back to tier default."""
@@ -155,6 +166,24 @@ class LiteLLMProvider:
         self._call_count = 0
         self._call_timestamps.clear()
 
+    @staticmethod
+    def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """Estimate cost using the static cost table.
+
+        Args:
+            model: The model ID.
+            prompt_tokens: Number of input tokens.
+            completion_tokens: Number of output tokens.
+
+        Returns:
+            Estimated cost in USD, or 0.0 if model is not in the table.
+        """
+        costs = _OPENAI_COSTS.get(model)
+        if costs is None:
+            return 0.0
+        input_cost, output_cost = costs
+        return (prompt_tokens / 1000.0) * input_cost + (completion_tokens / 1000.0) * output_cost
+
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Send a completion request with retry and backoff.
 
@@ -181,7 +210,6 @@ class LiteLLMProvider:
             "messages": messages,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
-            "timeout": self.timeout_seconds,
         }
         if request.json_mode:
             kwargs["response_format"] = {"type": "json_object"}
@@ -190,22 +218,23 @@ class LiteLLMProvider:
         for attempt in range(self.max_retries):
             try:
                 start = time.monotonic()
-                response = await litellm.acompletion(**kwargs)  # type: ignore[arg-type]
+                response = await self._client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
                 latency_ms = (time.monotonic() - start) * 1000
 
                 content = response.choices[0].message.content or ""
                 usage = {}
+                prompt_tokens = 0
+                completion_tokens = 0
                 if response.usage:
+                    prompt_tokens = response.usage.prompt_tokens
+                    completion_tokens = response.usage.completion_tokens
                     usage = {
-                        "prompt_tokens": response.usage.prompt_tokens,
-                        "completion_tokens": response.usage.completion_tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
                         "total_tokens": response.usage.total_tokens,
                     }
 
-                try:
-                    cost = litellm.completion_cost(completion_response=response)
-                except Exception:
-                    cost = 0.0
+                cost = self._estimate_cost(model, prompt_tokens, completion_tokens)
 
                 # Update tracking after successful call
                 self._total_cost_usd += cost

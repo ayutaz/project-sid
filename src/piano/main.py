@@ -92,9 +92,9 @@ def _create_provider(args: argparse.Namespace) -> Any:
     """Create an LLM provider based on CLI flags."""
     if args.mock_llm:
         return MockLLMProvider()
-    from piano.llm.provider import LiteLLMProvider
+    from piano.llm.provider import OpenAIProvider
 
-    return LiteLLMProvider()
+    return OpenAIProvider()
 
 
 def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:

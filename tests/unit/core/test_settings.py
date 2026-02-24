@@ -17,7 +17,6 @@ from piano.config.settings import (
     CheckpointSettings,
     ConsolidationSettings,
     LLMSettings,
-    LocalLLMSettings,
     LogSettings,
     MinecraftSettings,
     PianoSettings,
@@ -84,13 +83,6 @@ class TestDefaultSettings:
         assert settings.qdrant.collection_prefix == "ltm"
         assert settings.qdrant.embedding_dim == 1536
 
-    def test_default_local_llm_settings(self) -> None:
-        settings = PianoSettings()
-        assert settings.local_llm.provider == "ollama"
-        assert settings.local_llm.url == "http://localhost:11434"
-        assert settings.local_llm.model == "llama3"
-        assert settings.local_llm.timeout == 30.0
-
     def test_default_checkpoint_settings(self) -> None:
         settings = PianoSettings()
         assert settings.checkpoint.dir == "checkpoints"
@@ -155,16 +147,6 @@ class TestEnvironmentOverride:
         with patch.dict(os.environ, {"PIANO_QDRANT__EMBEDDING_DIM": "384"}):
             settings = PianoSettings()
             assert settings.qdrant.embedding_dim == 384
-
-    def test_local_llm_provider_override(self) -> None:
-        with patch.dict(os.environ, {"PIANO_LOCAL_LLM__PROVIDER": "vllm"}):
-            settings = PianoSettings()
-            assert settings.local_llm.provider == "vllm"
-
-    def test_local_llm_url_override(self) -> None:
-        with patch.dict(os.environ, {"PIANO_LOCAL_LLM__URL": "http://vllm:8000"}):
-            settings = PianoSettings()
-            assert settings.local_llm.url == "http://vllm:8000"
 
     def test_checkpoint_dir_override(self) -> None:
         with patch.dict(os.environ, {"PIANO_CHECKPOINT__DIR": "/data/checkpoints"}):
@@ -255,7 +237,6 @@ class TestGetSettings:
         assert isinstance(settings.scheduler, SchedulerSettings)
         assert isinstance(settings.log, LogSettings)
         assert isinstance(settings.qdrant, QdrantSettings)
-        assert isinstance(settings.local_llm, LocalLLMSettings)
         assert isinstance(settings.checkpoint, CheckpointSettings)
         assert isinstance(settings.consolidation, ConsolidationSettings)
 
@@ -280,18 +261,6 @@ class TestNestedSettingsModels:
         assert q.url == "http://qdrant:6333"
         assert q.collection_prefix == "test"
         assert q.embedding_dim == 384
-
-    def test_local_llm_settings_model(self) -> None:
-        llm = LocalLLMSettings(
-            provider="vllm",
-            url="http://vllm:8000",
-            model="llama-3.3-70b",
-            timeout=60.0,
-        )
-        assert llm.provider == "vllm"
-        assert llm.url == "http://vllm:8000"
-        assert llm.model == "llama-3.3-70b"
-        assert llm.timeout == 60.0
 
     def test_checkpoint_settings_model(self) -> None:
         cp = CheckpointSettings(dir="/data/cp", max_count=5, interval_seconds=120.0)

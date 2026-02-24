@@ -18,9 +18,9 @@ AI agents have been evaluated in isolation or within small groups, where interac
 
 | Phase | Status | Tests | Key Deliverables |
 |-------|--------|-------|------------------|
-| Phase 0: MVP | Done | 407 | SAS (Redis), Scheduler (3-tier), CC (template compression), WM/STM, LLM (LiteLLM+Mock), ZMQ Bridge, 7 Skills, Action Awareness, Config, Docker, CI |
-| Phase 1: Foundation | Done | 1,165 | Goal Generation, Planning, Talking, Self-Reflection, Social Awareness, Big Five Personality, Social Graph, Emotion Tracking, LTM (Qdrant), Memory Consolidation, Model Tiering, LLM Gateway, Local LLM, NN Action Awareness, Checkpoint, Orchestrator (10 agents), Social/Advanced Skills |
-| Phase 2: Scaling | Done | 1,979 | Worker Pool, Supervisor, Sharding, Resource Limiter, Multi-Provider LLM, Prompt Cache, Structured Logging, Prometheus Metrics, Tracing, Collective Intelligence, Influencer Analysis, Governance/Meme/Role Eval, Distributed Checkpoint, K8s Manifests, Network Policies, TLS (Redis/ZMQ/Qdrant), CLI Launcher, Fault Injection Framework, E2E Test Infrastructure, Grafana Alerts |
+| Phase 0: MVP | Done | 407 | SAS (Redis), Scheduler (3-tier), CC (template compression), WM/STM, LLM (OpenAI+Mock), ZMQ Bridge, 7 Skills, Action Awareness, Config, Docker, CI |
+| Phase 1: Foundation | Done | 1,165 | Goal Generation, Planning, Talking, Self-Reflection, Social Awareness, Big Five Personality, Social Graph, Emotion Tracking, LTM (Qdrant), Memory Consolidation, Model Tiering, LLM Gateway, NN Action Awareness, Checkpoint, Orchestrator (10 agents), Social/Advanced Skills |
+| Phase 2: Scaling | Done | 1,979 | Worker Pool, Supervisor, Sharding, Resource Limiter, Prompt Cache, Structured Logging, Prometheus Metrics, Tracing, Collective Intelligence, Influencer Analysis, Governance/Meme/Role Eval, Distributed Checkpoint, K8s Manifests, Network Policies, TLS (Redis/ZMQ/Qdrant), CLI Launcher, Fault Injection Framework, E2E Test Infrastructure, Grafana Alerts |
 | E2E Simulation | Done | 2,079 | BridgePerception, ChatBroadcaster, BridgeManager, HealthMonitor, ActionMapper, Multi-bot Launcher (TS), Docker Compose sim, MC server verified |
 | Phase 3: Civilization | Pending | - | Specialization, Collective Rules, Cultural Memes, Religious Propagation |
 
@@ -131,7 +131,7 @@ docker compose -f docker/docker-compose.sim.yml up -d
 | Language | Python 3.12+, TypeScript (bridge) |
 | Package Manager | uv |
 | Shared State | Redis 7+ |
-| LLM | LiteLLM (multi-provider) |
+| LLM | OpenAI SDK |
 | Bridge | ZMQ (pyzmq / zeromq.js) |
 | Vector DB | Qdrant |
 | MC Server | Paper 1.20.4 (Docker) / Pufferfish + Velocity (production) |

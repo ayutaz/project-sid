@@ -46,17 +46,28 @@ def test_model_config_avg_cost() -> None:
     assert config.avg_cost_per_1k == 6.25
 
 
-def test_model_config_local_model() -> None:
-    """Test local model configuration."""
+def test_model_config_is_local_true() -> None:
+    """Test model configuration with is_local=True."""
     config = ModelConfig(
-        model_id="llama-3.3-70b",
-        tier=1,
+        model_id="custom-local",
+        tier=3,
         cost_per_1k_input=0.0,
         cost_per_1k_output=0.0,
         is_local=True,
     )
     assert config.is_local is True
     assert config.avg_cost_per_1k == 0.0
+
+
+def test_model_config_is_local_default_false() -> None:
+    """Test model configuration defaults is_local to False."""
+    config = ModelConfig(
+        model_id="gpt-4o-mini",
+        tier=3,
+        cost_per_1k_input=0.000150,
+        cost_per_1k_output=0.000600,
+    )
+    assert config.is_local is False
 
 
 # --- ModelRegistry Tests ---
@@ -101,10 +112,10 @@ def test_registry_get_models_for_tier() -> None:
     )
     registry.register(
         ModelConfig(
-            model_id="claude-sonnet-4-5",
+            model_id="gpt-4.1",
             tier=1,
-            cost_per_1k_input=3.0,
-            cost_per_1k_output=15.0,
+            cost_per_1k_input=2.0,
+            cost_per_1k_output=8.0,
         )
     )
 
@@ -122,7 +133,7 @@ def test_registry_get_models_for_tier() -> None:
     assert len(tier1_models) == 2
     model_ids = {m.model_id for m in tier1_models}
     assert "gpt-4o" in model_ids
-    assert "claude-sonnet-4-5" in model_ids
+    assert "gpt-4.1" in model_ids
 
     tier2_models = registry.get_models_for_tier(ModuleTier.MID)
     assert len(tier2_models) == 1
@@ -143,23 +154,23 @@ def test_registry_get_cheapest() -> None:
     )
     registry.register(
         ModelConfig(
-            model_id="claude-sonnet-4-5",
+            model_id="gpt-4.1",
             tier=1,
-            cost_per_1k_input=3.0,
-            cost_per_1k_output=15.0,  # avg = 9.0
+            cost_per_1k_input=2.0,
+            cost_per_1k_output=8.0,  # avg = 5.0
         )
     )
     registry.register(
         ModelConfig(
-            model_id="gemini-2.0-pro",
+            model_id="gpt-4.1-mini",
             tier=1,
-            cost_per_1k_input=1.25,
-            cost_per_1k_output=5.0,  # avg = 3.125 (cheapest)
+            cost_per_1k_input=0.4,
+            cost_per_1k_output=1.6,  # avg = 1.0 (cheapest)
         )
     )
 
     cheapest = registry.get_cheapest(ModuleTier.SLOW)
-    assert cheapest.model_id == "gemini-2.0-pro"
+    assert cheapest.model_id == "gpt-4.1-mini"
 
 
 def test_registry_get_fastest() -> None:
@@ -177,25 +188,25 @@ def test_registry_get_fastest() -> None:
     )
     registry.register(
         ModelConfig(
-            model_id="claude-haiku-4-5",
+            model_id="gpt-4.1-nano",
             tier=2,
-            cost_per_1k_input=1.0,
-            cost_per_1k_output=5.0,
+            cost_per_1k_input=0.1,
+            cost_per_1k_output=0.4,
             latency_ms_estimate=200.0,  # fastest
         )
     )
     registry.register(
         ModelConfig(
-            model_id="gemini-2.0-flash",
+            model_id="gpt-4.1-mini",
             tier=2,
-            cost_per_1k_input=0.10,
-            cost_per_1k_output=0.40,
+            cost_per_1k_input=0.4,
+            cost_per_1k_output=1.6,
             latency_ms_estimate=300.0,
         )
     )
 
     fastest = registry.get_fastest(ModuleTier.MID)
-    assert fastest.model_id == "claude-haiku-4-5"
+    assert fastest.model_id == "gpt-4.1-nano"
 
 
 def test_registry_empty_tier_raises_error() -> None:
@@ -214,10 +225,10 @@ def test_registry_empty_tier_raises_error() -> None:
 
 def test_fallback_chain_next() -> None:
     """Test iterating through fallback chain."""
-    chain = FallbackChain(models=["gpt-4o", "claude-sonnet-4-5", "gpt-4o-mini"])
+    chain = FallbackChain(models=["gpt-4o", "gpt-4.1", "gpt-4o-mini"])
 
     assert chain.next() == "gpt-4o"
-    assert chain.next() == "claude-sonnet-4-5"
+    assert chain.next() == "gpt-4.1"
     assert chain.next() == "gpt-4o-mini"
     assert chain.next() is None  # Exhausted
 
@@ -387,11 +398,11 @@ def test_router_default_fallback_chains_configured() -> None:
 
     # SLOW tier chain
     slow_chain = router._fallback_chains[ModuleTier.SLOW]
-    assert slow_chain.models == ["gpt-4o", "claude-sonnet-4-5-20250929", "gpt-4o-mini"]
+    assert slow_chain.models == ["gpt-4o", "gpt-4o-mini"]
 
     # MID tier chain
     mid_chain = router._fallback_chains[ModuleTier.MID]
-    assert mid_chain.models == ["gpt-4o-mini", "claude-haiku-4-5-20251001"]
+    assert mid_chain.models == ["gpt-4o-mini"]
 
     # FAST tier chain
     fast_chain = router._fallback_chains[ModuleTier.FAST]

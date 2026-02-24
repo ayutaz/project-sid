@@ -75,14 +75,6 @@ data:
   qdrant.embedding_dim: "1536"
 
   # ============================================================
-  # Local LLM (optional: Ollama or vLLM for cost reduction)
-  # ============================================================
-  local_llm.provider: "ollama"
-  local_llm.url: "http://local-llm.project-sid.svc.cluster.local:11434"
-  local_llm.model: "llama3"
-  local_llm.timeout: "30.0"
-
-  # ============================================================
   # Checkpoint (agent state persistence)
   # ============================================================
   checkpoint.dir: "/data/checkpoints"
@@ -117,12 +109,8 @@ metadata:
     app.kubernetes.io/part-of: project-sid
 type: Opaque
 stringData:
-  # LLM API key used by agent-workers (via LiteLLM)
-  llm-api-key: "PLACEHOLDER_REPLACE_ME"
-  # OpenAI API key for LLM gateway
+  # OpenAI API key for LLM provider
   openai-api-key: "PLACEHOLDER_REPLACE_ME"
-  # Anthropic API key for LLM gateway (optional)
-  anthropic-api-key: "PLACEHOLDER_REPLACE_ME"
   # Redis password (if auth is enabled)
   redis-password: "PLACEHOLDER_REPLACE_ME"
   # Grafana admin password

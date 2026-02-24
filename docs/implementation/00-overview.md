@@ -113,8 +113,7 @@
 | 分散実行 | asyncio + multiprocessing → Ray 2.x（段階的） | 08 |
 | ベクトルDB | Qdrant | 04 |
 | 永続化DB | PostgreSQL 16 | 08 |
-| LLM抽象化 | LiteLLM | 02 |
-| ローカルLLM | vLLM / Ollama（Phase 1からTier2/3に使用） | 02 |
+| LLM抽象化 | OpenAI SDK | 02 |
 | 監視 | Prometheus + Grafana | 10 |
 | ログ | Grafana Loki | 10 |
 | 実験管理 | MLflow + Hydra | 10 |
@@ -171,7 +170,7 @@
   - Scheduler: 3ティア並列実行（FAST/MID/SLOW）
   - CC: テンプレート圧縮 + LLM判断 + ブロードキャスト
   - Memory: WorkingMemory（容量10） + ShortTermMemory（容量100）
-  - LLM: LiteLLMProvider + MockLLMProvider + LLMCache（LRU+TTL）
+  - LLM: OpenAIProvider + MockLLMProvider + LLMCache（LRU+TTL）
   - Bridge: ZMQクライアント（REQ-REP + PUB-SUB）+ TypeScript Mineflayer bot
   - Skills: レジストリ + 7基本スキル + SkillExecutor
   - ActionAwareness: ルールベース期待-実際比較
@@ -182,7 +181,7 @@
   - 認知モジュール: GoalGeneration, Planning, SelfReflection, Talking
   - 社会認知: SocialAwareness, Personality(BigFive), SocialGraph, EmotionTracking
   - 記憶: LTM Store(Qdrant), LTM Search(忘却曲線), Memory Consolidation(STM→LTM)
-  - LLM基盤: ModelTiering(3層), LLMGateway(priority queue+circuit breaker), LocalLLM(Ollama/vLLM)
+  - LLM基盤: ModelTiering(3層), LLMGateway(priority queue+circuit breaker)
   - 行動認識: ActionAwareness NN(~100Kパラメータ), NNTrainer(SGD+momentum)
   - 評価: ItemCollectionBenchmark, SocialCognitionMetrics
   - インフラ: Checkpoint/Restore, SAS Phase1 Mixin, Orchestrator(10エージェント管理)
@@ -193,7 +192,7 @@
   - 可観測性: 構造化ログ, Prometheusメトリクス, トレーシング
   - 社会認知拡張: CollectiveIntelligence, InfluencerAnalysis
   - 評価拡張: GovernanceMetrics, MemeTracker, PerformanceBenchmark, RoleInference
-  - LLM拡張: MultiProvider(フェイルオーバー), PromptCache(セマンティックキャッシュ)
+  - LLM拡張: PromptCache(セマンティックキャッシュ)
   - ブリッジ拡張: VelocityProxy(マルチサーバー)
   - インフラ: DistributedCheckpoint, Kubernetes manifests, Grafana/Prometheus監視基盤
   - CI: Phase 2パイプライン
