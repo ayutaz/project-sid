@@ -52,8 +52,11 @@ class TestDefaultSettings:
     def test_default_bridge_settings(self) -> None:
         settings = PianoSettings()
         assert settings.bridge.host == "localhost"
-        assert settings.bridge.command_port == 5555
-        assert settings.bridge.event_port == 5556
+        assert settings.bridge.base_command_port == 5555
+        assert settings.bridge.base_event_port == 5556
+        # Redundant command_port / event_port should not exist
+        assert not hasattr(settings.bridge, "command_port")
+        assert not hasattr(settings.bridge, "event_port")
 
     def test_default_minecraft_settings(self) -> None:
         settings = PianoSettings()

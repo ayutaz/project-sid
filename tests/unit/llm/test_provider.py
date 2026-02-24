@@ -8,6 +8,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import BadRequestError as OpenAIBadRequestError
 
 from piano.core.types import LLMRequest, ModuleTier
 from piano.llm.provider import (
@@ -458,3 +460,108 @@ class TestCostTracking:
         # Cost and count should remain at 0
         assert provider.total_cost_usd == 0.0
         assert provider.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_timestamp_recorded_after_success(self) -> None:
+        """Rate limit timestamp should only be recorded after a successful call."""
+        mock_resp = _make_openai_response("ok")
+        provider = OpenAIProvider(calls_per_minute_limit=10, api_key="test-key")
+
+        provider._client.chat.completions.create = AsyncMock(return_value=mock_resp)
+        await provider.complete(LLMRequest(prompt="hello"))
+
+        # Timestamp should be recorded
+        assert len(provider._call_timestamps) == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_timestamp_not_recorded_on_failure(self) -> None:
+        """Rate limit timestamp should NOT be recorded when the call fails."""
+        provider = OpenAIProvider(max_retries=1, calls_per_minute_limit=10, api_key="test-key")
+
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=RuntimeError("fail"),
+        )
+
+        with pytest.raises(RuntimeError):
+            await provider.complete(LLMRequest(prompt="fail"))
+
+        # No timestamp recorded since call failed
+        assert len(provider._call_timestamps) == 0
+
+
+# ---------------------------------------------------------------------------
+# Non-transient error handling
+# ---------------------------------------------------------------------------
+
+
+class TestNonTransientErrors:
+    @pytest.mark.asyncio
+    async def test_authentication_error_not_retried(self) -> None:
+        """AuthenticationError should not be retried."""
+        provider = OpenAIProvider(max_retries=3, api_key="test-key")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.headers = {}
+        exc = OpenAIAuthenticationError(
+            message="Invalid API key",
+            response=mock_response,
+            body=None,
+        )
+        provider._client.chat.completions.create = AsyncMock(side_effect=exc)
+
+        with (
+            patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            pytest.raises(OpenAIAuthenticationError),
+        ):
+            await provider.complete(LLMRequest(prompt="hi"))
+
+        # Sleep should never have been called (no retry)
+        assert mock_sleep.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_bad_request_error_not_retried(self) -> None:
+        """BadRequestError should not be retried."""
+        provider = OpenAIProvider(max_retries=3, api_key="test-key")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.headers = {}
+        exc = OpenAIBadRequestError(
+            message="Bad request",
+            response=mock_response,
+            body=None,
+        )
+        provider._client.chat.completions.create = AsyncMock(side_effect=exc)
+
+        with (
+            patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            pytest.raises(OpenAIBadRequestError),
+        ):
+            await provider.complete(LLMRequest(prompt="hi"))
+
+        # Sleep should never have been called (no retry)
+        assert mock_sleep.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_transient_error_still_retried(self) -> None:
+        """RuntimeError (transient) should still be retried."""
+        mock_resp = _make_openai_response("ok")
+        provider = OpenAIProvider(max_retries=3, api_key="test-key")
+
+        call_count = 0
+
+        async def fail_then_succeed(**kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise RuntimeError("transient")
+            return mock_resp
+
+        provider._client.chat.completions.create = fail_then_succeed  # type: ignore[assignment]
+
+        with patch("piano.llm.provider.asyncio.sleep", new_callable=AsyncMock):
+            result = await provider.complete(LLMRequest(prompt="hi"))
+
+        assert result.content == "ok"
+        assert call_count == 2

@@ -51,6 +51,8 @@ class LLMCache:
                 "system_prompt": request.system_prompt,
                 "model": request.model,
                 "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "json_mode": request.json_mode,
             },
             sort_keys=True,
         )
@@ -137,6 +139,16 @@ class CachedLLMProvider:
     def cache(self) -> LLMCache:
         """Access the underlying cache instance."""
         return self._cache
+
+    @property
+    def total_cost_usd(self) -> float:
+        """Return the total cost in USD from the wrapped provider."""
+        return getattr(self._provider, "total_cost_usd", 0.0)
+
+    @property
+    def call_count(self) -> int:
+        """Return the total call count from the wrapped provider."""
+        return getattr(self._provider, "call_count", 0)
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Return a cached response or delegate to the wrapped provider.

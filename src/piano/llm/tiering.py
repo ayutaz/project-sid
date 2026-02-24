@@ -18,6 +18,9 @@ from piano.core.types import LLMRequest, ModuleTier
 logger = structlog.get_logger(__name__)
 
 __all__ = [
+    "MODEL_TIER_FAST",
+    "MODEL_TIER_MID",
+    "MODEL_TIER_SLOW",
     "FallbackChain",
     "ModelConfig",
     "ModelRegistry",
@@ -26,6 +29,12 @@ __all__ = [
 
 
 # --- Model Configuration ---
+
+
+# Model tier values: 1=SLOW (best quality), 2=MID, 3=FAST (cheapest)
+MODEL_TIER_SLOW = 1
+MODEL_TIER_MID = 2
+MODEL_TIER_FAST = 3
 
 
 class ModelConfig(BaseModel):
@@ -40,7 +49,6 @@ class ModelConfig(BaseModel):
     cost_per_1k_output: float = Field(ge=0.0)  # USD per 1K output tokens
     max_tokens: int = Field(default=4096, ge=1)
     latency_ms_estimate: float = Field(default=1000.0, ge=0.0)
-    is_local: bool = False  # Local models (vLLM, Ollama) have zero API cost
 
     @property
     def avg_cost_per_1k(self) -> float:
@@ -277,7 +285,23 @@ class ModelRouter:
         if chain is None:
             raise ValueError(f"No fallback chain configured for tier {tier}")
 
-        # Reset chain and get first model
+        # Try to find a model that hasn't exceeded the failure threshold
+        max_failures = 3
+        # Walk through chain from current position, skipping failed models
+        while chain.has_next():
+            model_id = chain.next()
+            if model_id is None:
+                break
+            if self._failure_counts.get(model_id, 0) < max_failures:
+                logger.debug(
+                    "Selected model from fallback chain",
+                    tier=tier,
+                    model_id=model_id,
+                    budget_remaining=self._budget_remaining,
+                )
+                return model_id
+
+        # Chain exhausted: reset and return first model
         chain.reset()
         model_id = chain.next()
 
@@ -285,7 +309,7 @@ class ModelRouter:
             raise ValueError(f"Fallback chain for tier {tier} is empty")
 
         logger.debug(
-            "Selected model from fallback chain",
+            "Selected model from fallback chain (reset)",
             tier=tier,
             model_id=model_id,
             budget_remaining=self._budget_remaining,

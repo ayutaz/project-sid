@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import pytest
 import structlog
@@ -438,6 +441,17 @@ class TestConfigurePianoLogging:
         assert parsed["worker_id"] == "w-1"
         assert parsed["trace_id"] == "abc123"
         assert parsed["action"] == "mine"
+
+    def test_file_output(self, tmp_path: Path) -> None:
+        """If output is a file path, a FileHandler is created."""
+        log_file = tmp_path / "test.log"
+        cfg = LoggingConfig(output=str(log_file))
+        configure_piano_logging(cfg)
+        root = logging.getLogger()
+        # Should have a FileHandler targeting our file
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) >= 1
+        assert any(str(log_file) in h.baseFilename for h in file_handlers)
 
     def test_filter_integration(self) -> None:
         """LogFilter correctly filters events via configure_piano_logging."""

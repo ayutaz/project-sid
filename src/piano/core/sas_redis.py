@@ -79,7 +79,11 @@ class RedisSAS(SharedAgentState):
                 kwargs["ssl_keyfile"] = settings.ssl_keyfile
 
         client = aioredis.Redis(**kwargs)
-        return cls(redis=client, agent_id=agent_id)
+        try:
+            return cls(redis=client, agent_id=agent_id)
+        except Exception:
+            client.close()
+            raise
 
     # --- Key helpers ---
 
@@ -260,8 +264,10 @@ class RedisSAS(SharedAgentState):
         """Add an action to history (auto-trims to capacity limit)."""
         try:
             key = self._key("action_history")
-            await self._redis.lpush(key, entry.model_dump_json())
-            await self._redis.ltrim(key, 0, _ACTION_HISTORY_LIMIT - 1)
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.lpush(key, entry.model_dump_json())
+                pipe.ltrim(key, 0, _ACTION_HISTORY_LIMIT - 1)
+                await pipe.execute()
             self._healthy = True
         except redis.RedisError as e:
             self._healthy = False
@@ -332,8 +338,10 @@ class RedisSAS(SharedAgentState):
         """Add entry to short-term memory (auto-trims to capacity limit)."""
         try:
             key = self._key("stm")
-            await self._redis.lpush(key, entry.model_dump_json())
-            await self._redis.ltrim(key, 0, _STM_LIMIT - 1)
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.lpush(key, entry.model_dump_json())
+                pipe.ltrim(key, 0, _STM_LIMIT - 1)
+                await pipe.execute()
             self._healthy = True
         except redis.RedisError as e:
             self._healthy = False
@@ -391,6 +399,14 @@ class RedisSAS(SharedAgentState):
             result = json.loads(raw)
             self._healthy = True
             return result
+        except json.JSONDecodeError as e:
+            self._healthy = False
+            logger.warning(
+                "redis_get_last_cc_decision_json_error",
+                agent_id=self._agent_id,
+                error=str(e),
+            )
+            return None
         except redis.RedisError as e:
             self._healthy = False
             logger.warning(
@@ -425,6 +441,15 @@ class RedisSAS(SharedAgentState):
             result = json.loads(raw)
             self._healthy = True
             return result
+        except json.JSONDecodeError as e:
+            self._healthy = False
+            logger.warning(
+                "redis_get_section_json_error",
+                agent_id=self._agent_id,
+                section=section,
+                error=str(e),
+            )
+            return {}
         except redis.RedisError as e:
             self._healthy = False
             logger.warning(
@@ -440,6 +465,14 @@ class RedisSAS(SharedAgentState):
         try:
             await self._redis.set(self._key(section), json.dumps(data))
             self._healthy = True
+        except (TypeError, ValueError) as e:
+            self._healthy = False
+            logger.error(
+                "redis_update_section_serialize_error",
+                agent_id=self._agent_id,
+                section=section,
+                error=str(e),
+            )
         except redis.RedisError as e:
             self._healthy = False
             logger.error(
@@ -506,6 +539,8 @@ class RedisSAS(SharedAgentState):
         does not already exist, preserving any previously stored state.
         """
         try:
+            # Verify Redis connectivity first
+            await self._redis.ping()
             defaults: list[tuple[str, str]] = [
                 ("percepts", PerceptData().model_dump_json()),
                 ("goals", GoalData().model_dump_json()),

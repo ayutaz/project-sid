@@ -620,3 +620,39 @@ class TestDirectInfluence:
         score = model._calculate_direct_influence("hub", graph)
         assert score > 0.0
         assert score <= 1.0
+
+
+class TestPropagationDecayCorrectness:
+    """Tests that emotion propagation applies decay correctly (no double decay)."""
+
+    def test_no_double_decay_in_chain(self) -> None:
+        """Test that intensity at hop N uses decay_factor^N, not compounded."""
+        config = InfluenceConfig(
+            decay_factor=0.5,
+            max_hops=3,
+            emotion_contagion_rate=1.0,
+            influence_threshold=0.001,
+        )
+        # Build chain A -> B -> C with identical edges
+        graph = SocialGraph()
+        graph.set_relationship(
+            SocialRelation(source_id="A", target_id="B", affinity=1.0, trust=1.0)
+        )
+        graph.set_relationship(
+            SocialRelation(source_id="B", target_id="C", affinity=1.0, trust=1.0)
+        )
+
+        model = InfluencerModel(config=config)
+        result = model.propagate_emotion("A", "happy", graph)
+
+        # With perfect edges (weight=1.0), no personality (susceptibility=0.65):
+        # B (hop 1): 1.0 * 1.0 * 0.5 * 1.0 * 0.65 * 1.0 = 0.325
+        # C (hop 2): 0.325 * 1.0 * 0.5 * 1.0 * 0.65 * 1.0 = 0.105625
+        # If double decay existed, C would be much smaller
+        assert "B" in result
+        assert "C" in result
+
+        # B should be ~ 0.325
+        assert result["B"] == pytest.approx(0.325, abs=0.01)
+        # C should be ~ B * 0.5 * 0.65 = 0.325 * 0.325 = 0.105625
+        assert result["C"] == pytest.approx(result["B"] * 0.5 * 0.65, abs=0.01)

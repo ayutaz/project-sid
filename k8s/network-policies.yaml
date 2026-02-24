@@ -95,7 +95,7 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
-    # External LLM APIs (OpenAI, Anthropic, etc.) on HTTPS
+    # External LLM API (OpenAI) on HTTPS
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -161,6 +161,63 @@ spec:
         - protocol: TCP
           port: 6379
 ---
+# 5b. Redis cluster gossip ingress: allow redis pods to communicate on gossip port
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-cluster-gossip-ingress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-cluster
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-cluster
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+---
+# 5c. Redis cluster egress: allow redis pods to communicate with each other
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-cluster-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-cluster
+  policyTypes:
+    - Egress
+  egress:
+    # Redis cluster inter-node communication (data + gossip)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis-cluster
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
 # 6. Qdrant ingress: from agent-worker on ports 6333, 6334
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -183,6 +240,30 @@ spec:
           port: 6333
         - protocol: TCP
           port: 6334
+---
+# 6b. Qdrant egress: DNS resolution
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-egress
+  namespace: project-sid
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  policyTypes:
+    - Egress
+  egress:
+    # DNS (kube-dns)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 ---
 # 7. Minecraft shard egress: redis, DNS
 apiVersion: networking.k8s.io/v1

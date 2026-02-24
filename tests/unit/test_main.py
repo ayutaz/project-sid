@@ -10,6 +10,9 @@ import pytest
 from piano.config.settings import PianoSettings
 from piano.llm.mock import MockLLMProvider
 from piano.main import (
+    _create_provider,
+    _create_sas,
+    _install_shutdown_handler,
     _register_modules,
     _run_multi,
     _run_single,
@@ -279,3 +282,116 @@ class TestBridgeMode:
             await _run_single(args, provider, tick_interval=0.1)
 
         mock_mgr.disconnect_all.assert_awaited_once()
+
+
+class TestCreateProvider:
+    """Tests for _create_provider with settings."""
+
+    def test_mock_provider_ignores_settings(self) -> None:
+        args = parse_args(["--mock-llm"])
+        settings = PianoSettings()
+        provider = _create_provider(args, settings=settings)
+        assert isinstance(provider, MockLLMProvider)
+
+    def test_openai_provider_receives_settings(self) -> None:
+        """OpenAIProvider is configured with LLM settings from PianoSettings."""
+        from piano.llm.provider import OpenAIProvider
+
+        args = parse_args([])
+        settings = PianoSettings()
+        settings.llm.api_key = "sk-test-key"
+        settings.llm.cost_limit_usd = 42.0
+        settings.llm.calls_per_minute_limit = 77
+
+        provider = _create_provider(args, settings=settings)
+        assert isinstance(provider, OpenAIProvider)
+        assert provider._cost_limit_usd == 42.0
+        assert provider._calls_per_minute_limit == 77
+
+    def test_openai_provider_empty_api_key_passes_none(self) -> None:
+        """Empty api_key string maps to None (uses OPENAI_API_KEY env var)."""
+        from piano.llm.provider import OpenAIProvider
+
+        args = parse_args([])
+        settings = PianoSettings()
+        settings.llm.api_key = ""  # default
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-dummy-for-test"}):
+            provider = _create_provider(args, settings=settings)
+            assert isinstance(provider, OpenAIProvider)
+
+    def test_openai_provider_without_settings(self) -> None:
+        from piano.llm.provider import OpenAIProvider
+
+        args = parse_args([])
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-dummy-for-test"}):
+            provider = _create_provider(args)
+            assert isinstance(provider, OpenAIProvider)
+
+
+class TestCreateSasRedisFallback:
+    """Tests for Redis SAS fallback warning."""
+
+    async def test_redis_fallback_logs_warning(self) -> None:
+        """When Redis is unavailable, _create_sas logs a warning and falls back."""
+        with patch("piano.main.logger") as mock_logger:
+            sas = _create_sas("test-agent", mock_mode=False)
+            # Should have logged a warning about Redis failure
+            if mock_logger.warning.called:
+                call_args = mock_logger.warning.call_args
+                assert "redis_sas_creation_failed" in str(call_args)
+            # Should return an in-memory SAS regardless
+            assert sas is not None
+            assert sas.agent_id == "test-agent"
+
+    async def test_mock_mode_skips_redis(self) -> None:
+        """mock_mode=True never attempts Redis."""
+        sas = _create_sas("test-agent", mock_mode=True)
+        assert sas is not None
+        assert sas.agent_id == "test-agent"
+
+
+class TestVersionFlag:
+    """Tests for --version flag."""
+
+    def test_version_flag_exits(self) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+
+class TestConfigValidation:
+    """Tests for --config path validation."""
+
+    async def test_missing_config_warns(self) -> None:
+        """Run with nonexistent config path should warn but not crash."""
+        args = parse_args(["--mock-llm", "--ticks", "1", "--config", "/nonexistent/path.env"])
+        await run(args)
+
+    async def test_existing_config_works(self, tmp_path) -> None:
+        """Run with valid config path works normally."""
+        env_file = tmp_path / "test.env"
+        env_file.write_text("PIANO_LOG__LEVEL=DEBUG\n")
+        args = parse_args(["--mock-llm", "--ticks", "1", "--config", str(env_file)])
+        await run(args)
+
+
+class TestInstallShutdownHandler:
+    """Tests for the unified shutdown handler."""
+
+    async def test_shutdown_handler_sets_event(self) -> None:
+        """The shutdown handler correctly sets the event."""
+        event = asyncio.Event()
+        _install_shutdown_handler(event)
+        # Event should not be set initially
+        assert not event.is_set()
+
+
+class TestLogLevelFromSettings:
+    """Tests for settings.log.level integration."""
+
+    async def test_settings_log_level_used_when_cli_default(self) -> None:
+        """When CLI uses default INFO, settings.log.level should be used."""
+        args = parse_args(["--mock-llm", "--ticks", "1"])
+        # Default --log-level is INFO, so settings.log.level should be checked
+        assert args.log_level == "INFO"

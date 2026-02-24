@@ -28,6 +28,7 @@ class ChatBroadcaster(Module):
         self._sas = sas
         self._sent_count = 0
         self._send_lock = asyncio.Lock()
+        self._cached_sas: SharedAgentState | None = None
 
     @property
     def name(self) -> str:
@@ -40,12 +41,16 @@ class ChatBroadcaster(Module):
     async def on_broadcast(self, decision: CCDecision) -> None:
         if not decision.speaking:
             return
-        if self._sas is None:
+        # Use cached SAS from most recent tick(), or constructor-provided SAS
+        sas = self._cached_sas or self._sas
+        if sas is None:
             return
         async with self._send_lock:
-            await self._send_and_clear(self._sas)
+            await self._send_and_clear(sas)
 
     async def tick(self, sas: SharedAgentState) -> ModuleResult:
+        # Cache SAS reference for use in on_broadcast()
+        self._cached_sas = sas
         section = await sas.get_section("talking")
         utterance = section.get("latest_utterance")
         if utterance and utterance.get("content"):

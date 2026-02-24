@@ -24,6 +24,8 @@ spec:
         app.kubernetes.io/part-of: project-sid
     spec:
       # Schedule on agent pool nodes (higher compute)
+      # TODO: Add topologySpreadConstraints to distribute pods across zones/nodes
+      # for improved fault tolerance in multi-zone clusters.
       nodeSelector:
         pool: agent
       terminationGracePeriodSeconds: 60
@@ -34,10 +36,11 @@ spec:
       containers:
         - name: agent-worker
           image: project-sid/agent-worker:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always  # Always pull :latest tags
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: false  # TODO: Enable readOnlyRootFilesystem with tmpfs mounts
+            # TODO: Add seccompProfile: { type: RuntimeDefault } for enhanced security
           resources:
             requests:
               cpu: "2"
@@ -65,7 +68,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: piano-secrets
-                  key: llm-api-key
+                  key: openai-api-key
             # --- Bridge (ZMQ) ---
             - name: PIANO_BRIDGE__HOST
               value: minecraft-shard-headless.project-sid.svc.cluster.local
@@ -96,20 +99,19 @@ spec:
                 configMapKeyRef:
                   name: piano-config
                   key: log.format
+          # No HTTP server is exposed; use exec probes instead
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 10
-            periodSeconds: 15
-            timeoutSeconds: 5
+            exec:
+              command: ["python", "-c", "import piano; print('ok')"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
+            exec:
+              command: ["python", "-c", "import piano; print('ok')"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 10
           ports:
             - name: health
               containerPort: 8080
@@ -186,3 +188,18 @@ spec:
         - type: Pods
           value: 1
           periodSeconds: 120
+---
+# PodDisruptionBudget: ensure at least 1 agent-worker is always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-worker-pdb
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: agent-worker
+    app.kubernetes.io/part-of: project-sid
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-worker

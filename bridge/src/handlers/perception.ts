@@ -5,12 +5,7 @@
 
 import { Bot } from "mineflayer";
 import * as zmq from "zeromq";
-
-interface BridgeEvent {
-  event_type: string;
-  data: Record<string, any>;
-  timestamp: string;
-}
+import { BridgeEvent } from "../types";
 
 // Block types we care about for perception
 const IMPORTANT_BLOCKS = new Set([
@@ -24,6 +19,9 @@ const IMPORTANT_BLOCKS = new Set([
   "wheat", "carrots", "potatoes", "beetroots",
   "water", "lava",
 ]);
+
+// Configurable scan radius via env var (default 4 for performance)
+const PERCEPTION_RADIUS = parseInt(process.env.PERCEPTION_RADIUS ?? "4", 10);
 
 /**
  * Collect enhanced perception data from the bot.
@@ -45,9 +43,9 @@ export function collectPerception(bot: Bot): Record<string, any> {
       position: { x: e.position.x, y: e.position.y, z: e.position.z },
     }));
 
-  // Nearby blocks (8 block radius)
+  // Nearby blocks (configurable radius, default 4)
   const nearbyBlocks: Array<{ name: string; position: { x: number; y: number; z: number } }> = [];
-  const radius = 8;
+  const radius = PERCEPTION_RADIUS;
   for (let dx = -radius; dx <= radius; dx++) {
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dz = -radius; dz <= radius; dz++) {
@@ -104,6 +102,8 @@ export function collectPerception(bot: Bot): Record<string, any> {
 
 /**
  * Publish an action_complete event.
+ * Wired into the command loop in index.ts to notify subscribers
+ * when a command finishes execution.
  */
 export async function publishActionComplete(
   pub: zmq.Publisher,

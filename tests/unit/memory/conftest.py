@@ -76,7 +76,7 @@ class InMemorySAS(SharedAgentState):
     # --- action history ---
 
     async def get_action_history(self, limit: int = 50) -> list[ActionHistoryEntry]:
-        return sorted(self._actions, key=lambda a: a.timestamp, reverse=True)[:limit]
+        return list(reversed(self._actions[-limit:]))
 
     async def add_action(self, entry: ActionHistoryEntry) -> None:
         self._actions.append(entry)
@@ -94,7 +94,7 @@ class InMemorySAS(SharedAgentState):
     # --- STM ---
 
     async def get_stm(self, limit: int = 100) -> list[MemoryEntry]:
-        return sorted(self._stm, key=lambda m: m.timestamp, reverse=True)[:limit]
+        return list(reversed(self._stm[-limit:]))
 
     async def add_stm(self, entry: MemoryEntry) -> None:
         self._stm.append(entry)

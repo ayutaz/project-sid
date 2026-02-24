@@ -146,11 +146,15 @@ class TestEmotionMap:
             "bored",
             "sad",
             "angry",
-            "afraid",
+            "depressed",
             "surprised",
         }
         mapped_emotions = set(EMOTION_MAP.values())
         assert mapped_emotions == expected_emotions
+
+    def test_depressed_for_negative_low(self) -> None:
+        """Test that negative/low maps to depressed (not afraid)."""
+        assert EMOTION_MAP[("negative", "low")] == "depressed"
 
 
 class TestEmotionTracker:
@@ -443,6 +447,37 @@ class TestEmotionTracker:
         assert restored_state.valence == pytest.approx(original_state.valence, abs=0.001)
         assert restored_state.arousal == pytest.approx(original_state.arousal, abs=0.001)
         assert restored_state.dominant_emotion == original_state.dominant_emotion
+
+    def test_apply_event_with_explicit_timestamp(self) -> None:
+        """Test apply_event accepts an explicit timestamp."""
+        tracker = EmotionTracker(decay_rate=0.0)
+        fixed_ts = 1_000_000.0
+        tracker._last_update = fixed_ts
+
+        event = EmotionEvent(
+            event_type="test",
+            intensity=1.0,
+            valence_shift=0.5,
+            arousal_shift=0.0,
+        )
+        tracker.apply_event(event, timestamp=fixed_ts)
+
+        assert tracker._last_update == fixed_ts
+        state = tracker.current_state
+        assert state.valence == pytest.approx(0.5, abs=0.01)
+
+    def test_apply_social_contagion_with_explicit_timestamp(self) -> None:
+        """Test apply_social_contagion accepts an explicit timestamp."""
+        tracker = EmotionTracker(decay_rate=0.0)
+        fixed_ts = 2_000_000.0
+        tracker._last_update = fixed_ts
+
+        other = EmotionState(valence=0.8, arousal=0.7)
+        tracker.apply_social_contagion(other, influence=0.5, timestamp=fixed_ts)
+
+        assert tracker._last_update == fixed_ts
+        state = tracker.current_state
+        assert state.valence > 0.0
 
     def test_to_dict_contains_all_fields(self) -> None:
         """Test serialized dict contains all necessary fields."""

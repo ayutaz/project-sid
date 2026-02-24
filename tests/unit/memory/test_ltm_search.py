@@ -615,3 +615,52 @@ class TestLTMRetrievalRepr:
         assert "LTMRetrievalModule" in r
         assert "ltm_retrieval" in r
         assert "mid" in r.lower()
+
+
+# --- WM capacity enforcement after LTM injection ---
+
+
+class TestWMCapacityEnforcement:
+    @pytest.mark.asyncio
+    async def test_wm_capped_at_capacity_after_injection(self) -> None:
+        """WM should not exceed capacity (10) after LTM injection."""
+        sas = InMemorySAS()
+        # Pre-fill WM with 8 entries
+        existing = [_memory(f"existing_{i}", importance=0.5) for i in range(8)]
+        await sas.set_working_memory(existing)
+
+        await sas.update_goals(GoalData(current_goal="test"))
+
+        # Create many LTM memories that will be injected
+        memories = [_ltm_entry(f"ltm_{i}", category="semantic", importance=0.9) for i in range(5)]
+        store = MockLTMStore(preset_memories=memories)
+        module = LTMRetrievalModule(store, max_memories_per_tick=5)
+        result = await module.tick(sas)
+
+        assert result.success
+        wm = await sas.get_working_memory()
+        # WM should be capped at 10
+        assert len(wm) <= 10
+
+    @pytest.mark.asyncio
+    async def test_wm_cap_keeps_highest_importance(self) -> None:
+        """When capping WM, highest importance entries should be kept."""
+        sas = InMemorySAS()
+        # Pre-fill WM with low-importance entries
+        existing = [_memory(f"low_{i}", importance=0.1) for i in range(9)]
+        await sas.set_working_memory(existing)
+
+        await sas.update_goals(GoalData(current_goal="test"))
+
+        # Inject high-importance LTM memory
+        memories = [_ltm_entry("high_ltm", category="semantic", importance=0.95)]
+        store = MockLTMStore(preset_memories=memories)
+        module = LTMRetrievalModule(store, max_memories_per_tick=5)
+        result = await module.tick(sas)
+
+        assert result.success
+        wm = await sas.get_working_memory()
+        assert len(wm) <= 10
+        # The high-importance LTM entry should be present
+        ltm_entries = [e for e in wm if e.category == "ltm_retrieval"]
+        assert len(ltm_entries) >= 1

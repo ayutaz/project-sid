@@ -13,6 +13,7 @@ from piano.observability.metrics import (
     Histogram,
     MetricsRegistry,
     PianoMetrics,
+    _escape_label_value,
     _format_labels,
     _format_value,
     _labels_key,
@@ -301,6 +302,16 @@ class TestMetricsRegistry:
         h.observe(0.3)
         assert h.get_count() == 1
 
+    def test_len(self) -> None:
+        reg = MetricsRegistry()
+        assert len(reg) == 0
+        reg.counter("c1", "Counter 1")
+        assert len(reg) == 1
+        reg.gauge("g1", "Gauge 1")
+        assert len(reg) == 2
+        reg.histogram("h1", "Histogram 1")
+        assert len(reg) == 3
+
 
 # ---------------------------------------------------------------------------
 # PianoMetrics tests
@@ -420,6 +431,22 @@ class TestHelpers:
         result = _format_labels({"status": "200", "method": "GET"})
         assert result == '{method="GET",status="200"}'
 
+    def test_escape_label_value_backslash(self) -> None:
+        assert _escape_label_value("a\\b") == "a\\\\b"
+
+    def test_escape_label_value_double_quote(self) -> None:
+        assert _escape_label_value('say "hello"') == 'say \\"hello\\"'
+
+    def test_escape_label_value_newline(self) -> None:
+        assert _escape_label_value("line1\nline2") == "line1\\nline2"
+
+    def test_escape_label_value_combined(self) -> None:
+        assert _escape_label_value('a\\b\n"c"') == 'a\\\\b\\n\\"c\\"'
+
+    def test_format_labels_escapes_values(self) -> None:
+        result = _format_labels({"msg": 'say "hi"'})
+        assert result == '{msg="say \\"hi\\""}'
+
     def test_format_value_integer(self) -> None:
         assert _format_value(42.0) == "42"
 
@@ -529,3 +556,52 @@ class TestPrometheusFormat:
         reg.counter("test_total", "Test").inc()
         text = reg.export()
         assert text.endswith("\n")
+
+
+# ---------------------------------------------------------------------------
+# Label names validation
+# ---------------------------------------------------------------------------
+
+
+class TestLabelNamesValidation:
+    """Tests for label_names validation in inc/set/observe."""
+
+    def test_counter_wrong_labels_raises(self) -> None:
+        c = Counter("req_total", "Requests", ["method", "status"])
+        with pytest.raises(ValueError, match="Label mismatch"):
+            c.inc(labels={"method": "GET"})  # missing 'status'
+
+    def test_counter_extra_labels_raises(self) -> None:
+        c = Counter("req_total", "Requests", ["method"])
+        with pytest.raises(ValueError, match="Label mismatch"):
+            c.inc(labels={"method": "GET", "status": "200"})
+
+    def test_counter_correct_labels_ok(self) -> None:
+        c = Counter("req_total", "Requests", ["method"])
+        c.inc(labels={"method": "GET"})
+        assert c.get(labels={"method": "GET"}) == 1.0
+
+    def test_counter_no_label_names_allows_any(self) -> None:
+        c = Counter("req_total", "Requests", [])
+        c.inc(labels={"anything": "goes"})
+        assert c.get(labels={"anything": "goes"}) == 1.0
+
+    def test_gauge_wrong_labels_raises(self) -> None:
+        g = Gauge("active", "Active", ["type"])
+        with pytest.raises(ValueError, match="Label mismatch"):
+            g.set(1.0, labels={"wrong": "key"})
+
+    def test_gauge_inc_wrong_labels_raises(self) -> None:
+        g = Gauge("active", "Active", ["type"])
+        with pytest.raises(ValueError, match="Label mismatch"):
+            g.inc(labels={"wrong": "key"})
+
+    def test_gauge_dec_wrong_labels_raises(self) -> None:
+        g = Gauge("active", "Active", ["type"])
+        with pytest.raises(ValueError, match="Label mismatch"):
+            g.dec(labels={"wrong": "key"})
+
+    def test_histogram_wrong_labels_raises(self) -> None:
+        h = Histogram("dur", "Duration", ["tier"], buckets=(1.0, float("inf")))
+        with pytest.raises(ValueError, match="Label mismatch"):
+            h.observe(0.5, labels={"wrong": "key"})

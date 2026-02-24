@@ -10,9 +10,12 @@ Reference: docs/implementation/04-memory-system.md Section 4.2.2
 
 from __future__ import annotations
 
+import collections
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from piano.core.sas import SharedAgentState
     from piano.core.types import MemoryEntry
 
@@ -27,9 +30,10 @@ class ShortTermMemory:
     """
 
     def __init__(self, capacity: int = _DEFAULT_CAPACITY) -> None:
-        self._entries: list[MemoryEntry] = []
+        self._entries: collections.deque[MemoryEntry] = collections.deque(maxlen=capacity)
         self._capacity = capacity
         self._sas: SharedAgentState | None = None
+        self._synced_ids: set[UUID] = set()
 
     # --- SAS binding ---
 
@@ -45,15 +49,16 @@ class ShortTermMemory:
         When the capacity is exceeded the oldest entry is removed and
         returned. Returns ``None`` when no eviction occurs.
         """
-        self._entries.append(entry)
         evicted: MemoryEntry | None = None
-        if len(self._entries) > self._capacity:
-            evicted = self._entries.pop(0)
+        if len(self._entries) >= self._capacity:
+            evicted = self._entries[0]  # Will be evicted by deque maxlen
+        self._entries.append(entry)
         return evicted
 
     def get_recent(self, limit: int = 10) -> list[MemoryEntry]:
         """Return the *limit* most recent entries (newest first)."""
-        return list(reversed(self._entries[-limit:]))
+        entries = list(self._entries)
+        return list(reversed(entries[-limit:]))
 
     def search_by_category(
         self,
@@ -76,6 +81,7 @@ class ShortTermMemory:
     def clear(self) -> None:
         """Remove all entries."""
         self._entries.clear()
+        self._synced_ids.clear()
 
     @property
     def size(self) -> int:
@@ -94,14 +100,25 @@ class ShortTermMemory:
     # --- SAS sync ---
 
     async def sync_to_sas(self) -> None:
-        """Push entries to the bound SAS (sends all, SAS trims)."""
+        """Push only unsynced entries to the bound SAS.
+
+        Tracks which entries have already been synced to prevent
+        duplicate accumulation on repeated calls.
+        """
         if self._sas is not None:
             for entry in self._entries:
-                await self._sas.add_stm(entry)
+                if entry.id not in self._synced_ids:
+                    await self._sas.add_stm(entry)
+                    self._synced_ids.add(entry.id)
 
     async def sync_from_sas(self) -> None:
         """Pull entries from SAS into local state."""
         if self._sas is not None:
-            self._entries = list(await self._sas.get_stm(limit=self._capacity))
+            sas_entries = list(await self._sas.get_stm(limit=self._capacity))
             # SAS returns newest-first; we store oldest-first internally.
-            self._entries.reverse()
+            sas_entries.reverse()
+            self._entries.clear()
+            self._synced_ids.clear()
+            for entry in sas_entries:
+                self._entries.append(entry)
+                self._synced_ids.add(entry.id)

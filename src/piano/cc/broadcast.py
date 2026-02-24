@@ -82,13 +82,15 @@ class BroadcastManager:
             BroadcastResult summarising delivery outcomes.
         """
         self._latest = decision
-        total = len(self._listeners)
+        # Copy to prevent RuntimeError from concurrent modification
+        listeners = dict(self._listeners)
+        total = len(listeners)
 
         if total == 0:
             return BroadcastResult(decision=decision, total_listeners=0)
 
         tasks: dict[str, asyncio.Task[None]] = {}
-        for name, module in self._listeners.items():
+        for name, module in listeners.items():
             tasks[name] = asyncio.create_task(
                 module.on_broadcast(decision),
                 name=f"broadcast-{name}",

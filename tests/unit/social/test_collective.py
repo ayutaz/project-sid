@@ -528,3 +528,44 @@ class TestCollectiveIntelligenceIntegration:
         # Mean of 0..99/100 = 49.5/100 = 0.495
         assert result.aggregated_value == pytest.approx(0.495)
         assert result.confidence == 1.0  # 100 observers -> max confidence
+
+    def test_threshold_analysis_without_scipy(self) -> None:
+        """Test threshold_analysis works when scipy is unavailable (manual pearson)."""
+        from piano.social import collective
+
+        # Temporarily force manual pearson path
+        original_flag = collective._HAS_SCIPY
+        try:
+            collective._HAS_SCIPY = False
+
+            ci = CollectiveIntelligence()
+            base = datetime.now(UTC)
+
+            observations: list[Observation] = []
+            actual_values: dict[str, float] = {}
+
+            # Create correlated data
+            for i in range(10):
+                target_id = f"t_{i}"
+                actual = float(i) / 10.0
+                actual_values[target_id] = actual
+                # 3 observers per target with small noise
+                for j in range(3):
+                    observations.append(
+                        _make_obs(
+                            f"obs_{j}",
+                            target_id,
+                            actual + (j - 1) * 0.01,
+                            ts=base + timedelta(seconds=i * 10 + j),
+                        )
+                    )
+
+            results = ci.threshold_analysis(observations, actual_values, thresholds=[1, 3])
+
+            assert len(results) == 2
+            # With well-correlated data, pearson_r should be high
+            for r in results:
+                if r.num_predictions >= 2:
+                    assert r.pearson_r > 0.9
+        finally:
+            collective._HAS_SCIPY = original_flag

@@ -15,6 +15,7 @@ def _make_bridge() -> MagicMock:
     """Create a mock BridgeClient."""
     bridge = MagicMock()
     bridge.start_event_listener = AsyncMock()
+    bridge.stop_event_listener = AsyncMock()
     return bridge
 
 
@@ -253,6 +254,37 @@ async def test_unknown_event_type_ignored(module: BridgePerceptionModule, sas: I
 # ---------------------------------------------------------------------------
 
 
+async def test_position_validation_missing_keys(
+    module: BridgePerceptionModule, sas: InMemorySAS
+) -> None:
+    """Position dict without x/y/z keys is rejected."""
+    original = await sas.get_percepts()
+    original_pos = original.position
+
+    # Missing 'z' key
+    await module._on_event(
+        _make_event("perception", {"position": {"x": 1.0, "y": 2.0}})
+    )
+    await module.tick(sas)
+    percepts = await sas.get_percepts()
+    assert percepts.position == original_pos  # unchanged
+
+
+async def test_position_validation_not_dict(
+    module: BridgePerceptionModule, sas: InMemorySAS
+) -> None:
+    """Position that is not a dict is rejected."""
+    original = await sas.get_percepts()
+    original_pos = original.position
+
+    await module._on_event(
+        _make_event("perception", {"position": [1.0, 2.0, 3.0]})
+    )
+    await module.tick(sas)
+    percepts = await sas.get_percepts()
+    assert percepts.position == original_pos  # unchanged
+
+
 async def test_shutdown_resets_listener_flag(
     module: BridgePerceptionModule, bridge: MagicMock
 ) -> None:
@@ -260,3 +292,6 @@ async def test_shutdown_resets_listener_flag(
     assert module._listener_started is True
     await module.shutdown()
     assert module._listener_started is False
+
+    # Verify stop_event_listener was called on the bridge
+    bridge.stop_event_listener.assert_awaited_once()

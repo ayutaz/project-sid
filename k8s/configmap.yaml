@@ -2,6 +2,11 @@
 # Central configuration for PianoSettings.
 # Maps to environment variables with PIANO_ prefix and __ nested delimiter.
 # Override per environment using kustomize overlays (dev/staging/prod).
+#
+# Config key naming convention:
+#   ConfigMap keys use dot notation (e.g., "llm.default_model")
+#   Env vars use PIANO_ prefix with __ for nesting (e.g., PIANO_LLM__DEFAULT_MODEL)
+#   Example: configmap key "scheduler.fast_tick_ms" -> env PIANO_SCHEDULER__FAST_TICK_MS
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -95,9 +100,29 @@ data:
   # Log format: json (structured) or text (human-readable)
   log.format: "json"
 ---
-# Secret placeholder: NEVER commit real values.
-# Populate via: kubectl create secret generic piano-secrets --from-literal=...
-# or via sealed-secrets / external-secrets-operator in production.
+# ##############################################################################
+# WARNING: THIS SECRET IS A TEMPLATE ONLY - DO NOT COMMIT REAL VALUES!
+# ##############################################################################
+#
+# All values below are placeholders. In production, create secrets using one of:
+#
+#   Option 1 - kubectl CLI:
+#     kubectl create secret generic piano-secrets \
+#       --namespace=project-sid \
+#       --from-literal=openai-api-key='sk-...' \
+#       --from-literal=redis-password='your-redis-password' \
+#       --from-literal=velocity-forwarding-secret='your-velocity-secret' \
+#       --from-literal=grafana-admin-password='your-grafana-password'
+#
+#   Option 2 - Sealed Secrets:
+#     kubeseal < piano-secrets.yaml > piano-sealed-secrets.yaml
+#
+#   Option 3 - External Secrets Operator:
+#     Configure ExternalSecret CRD pointing to your secrets backend
+#     (AWS Secrets Manager, HashiCorp Vault, etc.)
+#
+# NEVER commit real credentials to version control.
+# ##############################################################################
 apiVersion: v1
 kind: Secret
 metadata:
@@ -109,9 +134,8 @@ metadata:
     app.kubernetes.io/part-of: project-sid
 type: Opaque
 stringData:
-  # OpenAI API key for LLM provider
+  # PLACEHOLDER VALUES ONLY - replace via kubectl or secrets operator
   openai-api-key: "PLACEHOLDER_REPLACE_ME"
-  # Redis password (if auth is enabled)
   redis-password: "PLACEHOLDER_REPLACE_ME"
-  # Grafana admin password
+  velocity-forwarding-secret: "PLACEHOLDER_REPLACE_ME"
   grafana-admin-password: "PLACEHOLDER_REPLACE_ME"

@@ -352,6 +352,47 @@ class TestItemCollectionBenchmark:
         assert summary["snapshot_count"] == 0
 
 
+class TestSaturationTimePerformance:
+    """Tests for the O(N) saturation time optimization."""
+
+    def test_saturation_time_cumulative_correctness(self) -> None:
+        """Verify the O(N) implementation produces correct results."""
+        benchmark = ItemCollectionBenchmark()
+
+        # Add items rapidly
+        benchmark.record_snapshot({"item_1": 1})
+        time.sleep(0.05)
+        benchmark.record_snapshot({"item_1": 1, "item_2": 1})
+        time.sleep(0.05)
+        benchmark.record_snapshot({"item_1": 1, "item_2": 1, "item_3": 1})
+
+        # Pause then add one more (saturation)
+        time.sleep(0.7)
+        benchmark.record_snapshot({"item_1": 1, "item_2": 1, "item_3": 1, "item_4": 1})
+
+        saturation = benchmark.get_saturation_time(window_seconds=0.5, new_item_threshold=1)
+        assert saturation is not None
+        assert saturation > 0
+
+    def test_saturation_time_many_snapshots(self) -> None:
+        """Test saturation detection with many snapshots (O(N) check)."""
+        benchmark = ItemCollectionBenchmark()
+
+        # Add unique items continuously for first 50 snapshots
+        for i in range(50):
+            benchmark.record_snapshot({f"item_{i}": 1})
+            time.sleep(0.01)
+
+        # Then stop adding new items for another 50 snapshots
+        time.sleep(0.7)
+        for _ in range(50):
+            benchmark.record_snapshot({f"item_{j}": 1 for j in range(50)})
+            time.sleep(0.01)
+
+        saturation = benchmark.get_saturation_time(window_seconds=0.5, new_item_threshold=2)
+        assert saturation is not None
+
+
 class TestItemCollectionIntegration:
     """Integration tests for complete workflows."""
 

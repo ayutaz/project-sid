@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 import pytest
 
 from piano.cc.broadcast import BroadcastManager, BroadcastResult
-from piano.cc.controller import CC_SYSTEM_PROMPT, CognitiveController
+from piano.cc.controller import CC_SYSTEM_PROMPT, VALID_ACTIONS, CognitiveController
 from piano.core.types import CCDecision, LLMRequest, LLMResponse, ModuleResult, ModuleTier
 
 # -- Helpers / Fixtures -------------------------------------------------------
@@ -51,6 +52,14 @@ class BadJsonLLM:
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         return LLMResponse(content="not json at all", model="mock-model")
+
+
+class SlowLLM:
+    """Mock LLM provider that takes too long to respond."""
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        await asyncio.sleep(120)  # way longer than timeout
+        return LLMResponse(content='{"action": "idle"}', model="mock-model")
 
 
 class MockSAS:
@@ -327,3 +336,147 @@ class TestControllerWithBroadcast:
         assert result.data["broadcast_success"] == 1
         assert len(listener.received) == 1
         assert listener.received[0].action == "mine"
+
+
+class TestValidActionsMatchActionMapper:
+    """Test that VALID_ACTIONS includes all ACTION_TO_SKILL keys."""
+
+    def test_all_action_mapper_keys_in_valid_actions(self):
+        from piano.skills.action_mapper import ACTION_TO_SKILL
+
+        missing = set(ACTION_TO_SKILL.keys()) - VALID_ACTIONS
+        assert not missing, f"Actions in ACTION_TO_SKILL but not VALID_ACTIONS: {missing}"
+
+    def test_valid_actions_superset(self):
+        from piano.skills.action_mapper import ACTION_TO_SKILL
+
+        # VALID_ACTIONS may contain extra actions (e.g. "defend", "vote")
+        # but must cover all ACTION_TO_SKILL keys
+        for action in ACTION_TO_SKILL:
+            assert action in VALID_ACTIONS
+
+
+class TestFallbackResultBroadcasts:
+    """Test that _fallback_result broadcasts the decision to listeners."""
+
+    async def test_fallback_broadcasts_previous_decision(self, mock_sas: MockSAS):
+        bm = BroadcastManager()
+        listener = MockModule("output")
+        bm.register(listener)
+
+        cc = CognitiveController(llm=MockLLM(), broadcast_manager=bm)
+
+        # First tick succeeds and broadcasts
+        await cc.tick(mock_sas)
+        assert len(listener.received) == 1
+
+        # Swap to failing LLM - fallback should still broadcast
+        cc._llm = FailingLLM()
+        result = await cc.tick(mock_sas)
+
+        assert result.success
+        assert result.data.get("fallback") is True
+        # Listener should have received a second broadcast from the fallback
+        assert len(listener.received) == 2
+
+    async def test_fallback_no_broadcast_when_no_previous_decision(self, mock_sas: MockSAS):
+        bm = BroadcastManager()
+        listener = MockModule("output")
+        bm.register(listener)
+
+        cc = CognitiveController(llm=FailingLLM(), broadcast_manager=bm)
+        result = await cc.tick(mock_sas)
+
+        assert not result.success
+        # No previous decision, so no broadcast
+        assert len(listener.received) == 0
+
+
+class TestLLMTimeout:
+    """Test that LLM calls are subject to a timeout."""
+
+    async def test_slow_llm_triggers_timeout(self, mock_sas: MockSAS):
+        cc = CognitiveController(llm=SlowLLM())
+
+        async def fast_timeout_call_llm(compression):
+            request = LLMRequest(
+                prompt=compression.text,
+                system_prompt=CC_SYSTEM_PROMPT,
+                tier=ModuleTier.MID,
+                temperature=cc._temperature,
+                max_tokens=cc._max_tokens,
+                json_mode=True,
+            )
+            return await asyncio.wait_for(
+                cc._llm.complete(request), timeout=0.05
+            )
+
+        cc._call_llm = fast_timeout_call_llm
+        result = await cc.tick(mock_sas)
+
+        # Should fall back due to timeout
+        assert not result.success
+        assert result.error is not None
+
+
+class TestInvalidActionFallbackToIdle:
+    """Test that invalid actions consistently fall back to idle."""
+
+    async def test_invalid_action_becomes_idle_no_previous(self, mock_sas: MockSAS):
+        llm = MockLLM({"action": "INVALID_ACTION", "reasoning": "test"})
+        cc = CognitiveController(llm=llm)
+        result = await cc.tick(mock_sas)
+
+        assert result.success
+        assert result.data["action"] == "idle"
+
+    async def test_invalid_action_becomes_idle_with_previous(self, mock_sas: MockSAS):
+        """Even when a previous decision exists, invalid action falls back to idle, not raises."""
+        good_llm = MockLLM({"action": "mine", "reasoning": "first"})
+        cc = CognitiveController(llm=good_llm)
+        await cc.tick(mock_sas)
+
+        # Second tick with invalid action
+        cc._llm = MockLLM({"action": "BOGUS_ACTION", "reasoning": "second"})
+        result = await cc.tick(mock_sas)
+
+        assert result.success
+        assert result.data["action"] == "idle"
+
+
+class TestBroadcastConcurrentModificationSafety:
+    """Test that broadcast is safe against concurrent listener modifications."""
+
+    async def test_register_during_broadcast(self):
+        """Registering a new listener during broadcast should not cause RuntimeError."""
+        bm = BroadcastManager()
+
+        class ModifyingModule:
+            """Module that registers a new listener during on_broadcast."""
+
+            def __init__(self, bm: BroadcastManager):
+                self._bm = bm
+
+            @property
+            def name(self) -> str:
+                return "modifier"
+
+            @property
+            def tier(self) -> ModuleTier:
+                return ModuleTier.FAST
+
+            async def on_broadcast(self, decision: CCDecision) -> None:
+                # Register a new module during broadcast
+                new = MockModule("late_joiner")
+                self._bm.register(new)
+
+        modifier = ModifyingModule(bm)
+        bm.register(modifier)
+
+        decision = CCDecision(action="mine", reasoning="test")
+        # Should not raise RuntimeError
+        result = await bm.broadcast(decision)
+
+        assert result.success_count == 1
+        # The late_joiner was added during broadcast, now registered
+        assert "late_joiner" in bm.listener_names

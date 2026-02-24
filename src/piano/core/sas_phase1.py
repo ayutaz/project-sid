@@ -22,6 +22,7 @@ from __future__ import annotations
 
 __all__ = ["SASPhase1Mixin"]
 
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -49,10 +50,14 @@ class SASPhase1Mixin:
 
         Returns:
             Dictionary mapping trait names to float values (typically 0-1).
-            Returns empty dict if not set.
+            Returns empty dict if not set. Non-numeric values are skipped.
         """
         data = await self._sas.get_section("personality")
-        return {k: float(v) for k, v in data.items()}
+        result: dict[str, float] = {}
+        for k, v in data.items():
+            with contextlib.suppress(ValueError, TypeError):
+                result[k] = float(v)
+        return result
 
     async def update_personality(self, traits: dict[str, float]) -> None:
         """Update personality trait values.

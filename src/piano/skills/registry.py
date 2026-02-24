@@ -9,11 +9,14 @@ Reference: docs/implementation/05-minecraft-platform.md Section 3
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -62,7 +65,8 @@ class SkillRegistry:
             ValueError: If a skill with the same name is already registered.
         """
         if name in self._skills:
-            raise ValueError(f"Skill '{name}' is already registered")
+            logger.warning("Skill '%s' is already registered, skipping duplicate", name)
+            return
         self._skills[name] = Skill(
             name=name,
             execute_fn=skill_fn,

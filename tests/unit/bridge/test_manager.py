@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -165,6 +166,24 @@ class TestDisconnectAll:
             b2.disconnect.assert_awaited_once()
 
 
+class TestPortCollision:
+    def test_same_ports_raises(self) -> None:
+        """Creating a manager with identical cmd and evt ports raises ValueError."""
+        with pytest.raises(ValueError, match="must differ"):
+            BridgeManager(
+                base_command_port=5555,
+                base_event_port=5555,
+            )
+
+    def test_different_ports_ok(self) -> None:
+        """Creating a manager with different ports succeeds."""
+        mgr = BridgeManager(
+            base_command_port=5555,
+            base_event_port=5556,
+        )
+        assert mgr is not None
+
+
 class TestHealthCheck:
     async def test_all_healthy(self, manager: BridgeManager) -> None:
         with patch("piano.bridge.manager.BridgeClient") as mock_cls:
@@ -189,3 +208,30 @@ class TestHealthCheck:
 
             result = await manager.health_check()
             assert result == {"a0": True, "a1": False}
+
+    async def test_health_check_runs_in_parallel(self, manager: BridgeManager) -> None:
+        """health_check pings all bridges concurrently via asyncio.gather."""
+        import time
+
+        with patch("piano.bridge.manager.BridgeClient") as mock_cls:
+
+            async def _slow_ping() -> bool:
+                await asyncio.sleep(0.1)
+                return True
+
+            b1, b2, b3 = AsyncMock(), AsyncMock(), AsyncMock()
+            b1.ping = _slow_ping
+            b2.ping = _slow_ping
+            b3.ping = _slow_ping
+            mock_cls.side_effect = [b1, b2, b3]
+            manager.create_bridge("a0", 0)
+            manager.create_bridge("a1", 1)
+            manager.create_bridge("a2", 2)
+
+            start = time.monotonic()
+            result = await manager.health_check()
+            elapsed = time.monotonic() - start
+
+            assert result == {"a0": True, "a1": True, "a2": True}
+            # If sequential, would take 0.3s+; parallel should be ~0.1s
+            assert elapsed < 0.25

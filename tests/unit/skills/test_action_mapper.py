@@ -64,6 +64,42 @@ class TestMapAction:
         for action in noop_actions:
             assert ACTION_TO_SKILL[action] is None
 
+    def test_map_get_position(self) -> None:
+        assert map_action("get_position") == "get_position"
+
+    def test_map_get_inventory(self) -> None:
+        assert map_action("get_inventory") == "get_inventory"
+
+    def test_map_attack(self) -> None:
+        assert map_action("attack") == "attack_entity"
+
+    def test_map_place(self) -> None:
+        assert map_action("place") == "place_block"
+
+    def test_map_equip(self) -> None:
+        assert map_action("equip") == "equip_item"
+
+    def test_map_use(self) -> None:
+        assert map_action("use") == "use_item"
+
+    def test_map_drop(self) -> None:
+        assert map_action("drop") == "drop_item"
+
+    def test_map_eat(self) -> None:
+        assert map_action("eat") == "eat_food"
+
+    def test_map_flee(self) -> None:
+        assert map_action("flee") == "flee"
+
+    def test_map_build(self) -> None:
+        assert map_action("build") == "build_structure"
+
+    def test_map_think_returns_none(self) -> None:
+        assert map_action("think") is None
+
+    def test_map_observe_returns_none(self) -> None:
+        assert map_action("observe") is None
+
 
 class TestCreateFullRegistry:
     def test_create_full_registry_has_basic_skills(self) -> None:
@@ -84,7 +120,34 @@ class TestCreateFullRegistry:
         for skill_name in social_skills:
             assert skill_name in registry
 
+    def test_create_full_registry_has_advanced_skills(self) -> None:
+        registry = create_full_registry()
+        advanced_skills = [
+            "attack_entity",
+            "build_structure",
+            "flee",
+            "defend",
+            "farm_plant",
+            "farm_harvest",
+            "smelt_item",
+            "explore_direction",
+            "deposit_items",
+            "withdraw_items",
+        ]
+        for skill_name in advanced_skills:
+            assert skill_name in registry
+
     def test_create_full_registry_total_count(self) -> None:
         registry = create_full_registry()
-        # 7 basic + 9 social = 16
-        assert len(registry) == 16
+        # 7 basic + 9 social + 16 advanced = 32
+        assert len(registry) == 32
+
+    def test_all_action_to_skill_values_registered(self) -> None:
+        """Every non-None mapping in ACTION_TO_SKILL is present in the full registry."""
+        registry = create_full_registry()
+        for cc_action, skill_name in ACTION_TO_SKILL.items():
+            if skill_name is not None:
+                assert skill_name in registry, (
+                    f"ACTION_TO_SKILL['{cc_action}'] = '{skill_name}' "
+                    f"not found in registry. Available: {registry.list_skills()}"
+                )

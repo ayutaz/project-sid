@@ -15,7 +15,11 @@ kind: Kustomization
 
 namespace: project-sid
 
-# Common labels applied to all resources
+# Common labels applied to all resources.
+# NOTE: commonLabels are injected into spec.selector.matchLabels for Deployments
+# and StatefulSets. Since matchLabels are immutable after creation, adding or
+# removing labels here requires deleting and recreating those resources.
+# Consider using commonAnnotations for labels that may change.
 commonLabels:
   app.kubernetes.io/part-of: project-sid
   app.kubernetes.io/managed-by: kustomize

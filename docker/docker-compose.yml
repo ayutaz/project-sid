@@ -5,6 +5,7 @@ services:
   # --- Redis: Cache, Pub/Sub, Shared State ---
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -29,6 +30,7 @@ services:
   # --- PostgreSQL: Agent State, Memory, Experiment Results ---
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -45,14 +47,15 @@ services:
     networks:
       - piano_network
 
-  # --- Minecraft: Pufferfish Server ---
+  # --- Minecraft: Paper Server ---
   minecraft:
     image: itzg/minecraft-server
+    restart: unless-stopped
     ports:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      TYPE: PUFFERFISH
+      TYPE: "PAPER"
       VERSION: "1.20.4"
       ONLINE_MODE: "FALSE"
       MAX_PLAYERS: 100

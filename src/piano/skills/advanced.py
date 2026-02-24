@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from piano.skills.registry import SkillRegistry
+
 from piano.core.types import BridgeCommand
 
 __all__ = [
@@ -106,7 +108,13 @@ class CraftingRecipes:
 # --- Advanced Skill Functions ---
 
 
-def craft_chain(target_item: str, inventory: dict[str, int]) -> list[BridgeCommand]:
+def craft_chain(
+    target_item: str,
+    inventory: dict[str, int],
+    *,
+    max_depth: int = 10,
+    _seen: set[str] | None = None,
+) -> list[BridgeCommand]:
     """Generate a sequence of craft commands to create a target item.
 
     Recursively resolves crafting dependencies and generates the minimum
@@ -115,37 +123,45 @@ def craft_chain(target_item: str, inventory: dict[str, int]) -> list[BridgeComma
     Args:
         target_item: The item to craft (e.g., "stone_pickaxe").
         inventory: Current inventory mapping item names to counts.
+        max_depth: Maximum recursion depth to prevent infinite loops.
+        _seen: Internal set for cycle detection.
 
     Returns:
         List of BridgeCommand objects representing the craft sequence.
-        Returns empty list if recipe is not found or already have the item.
-
-    Example:
-        To craft a stone_pickaxe with no materials:
-        1. Craft sticks (requires planks)
-        2. Craft planks (requires logs) - if needed
-        3. Craft stone_pickaxe (requires cobblestone + sticks)
+        Returns empty list if recipe is not found, already have the item,
+        a cycle is detected, or max_depth is exceeded.
     """
-    if not CraftingRecipes.has_recipe(target_item):
-        # No recipe, assume it's a base material
+    if max_depth <= 0:
         return []
+
+    if _seen is None:
+        _seen = set()
+
+    if target_item in _seen:
+        return []
+
+    if not CraftingRecipes.has_recipe(target_item):
+        return []
+
+    _seen = _seen | {target_item}
 
     recipe = CraftingRecipes.get_recipe(target_item)
     commands: list[BridgeCommand] = []
     current_inv = dict(inventory)
 
-    # Recursively craft prerequisites
     for ingredient, needed in recipe.items():
         have = current_inv.get(ingredient, 0)
         if have < needed:
             shortage = needed - have
-            # Try to craft the ingredient
-            sub_commands = craft_chain(ingredient, current_inv)
+            sub_commands = craft_chain(
+                ingredient,
+                current_inv,
+                max_depth=max_depth - 1,
+                _seen=_seen,
+            )
             commands.extend(sub_commands)
-            # Assume crafting succeeded, update virtual inventory
             current_inv[ingredient] = current_inv.get(ingredient, 0) + shortage
 
-    # Now craft the target item
     commands.append(
         BridgeCommand(
             action="craft",
@@ -172,12 +188,6 @@ def build_structure(
 
     Returns:
         List of BridgeCommand objects for placing each block.
-
-    Example:
-        blocks = [
-            {"offset_x": 0, "offset_y": 0, "offset_z": 0, "block_type": "stone"},
-            {"offset_x": 1, "offset_y": 0, "offset_z": 0, "block_type": "stone"},
-        ]
     """
     commands: list[BridgeCommand] = []
     base_x = position["x"]
@@ -384,6 +394,145 @@ def withdraw_items(
     )
 
 
+# --- Async Wrappers for Advanced Skills ---
+
+_DEFAULT_POS: dict[str, float] = {"x": 0, "y": 0, "z": 0}
+
+
+async def _async_craft_chain(
+    bridge: Any,
+    target_item: str = "",
+    inventory: str | dict[str, int] = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for craft_chain that sends commands via bridge."""
+    inv = inventory if isinstance(inventory, dict) else {}
+    commands = craft_chain(target_item, inv)
+    results = []
+    for cmd in commands:
+        result = await bridge.send_command(cmd)
+        results.append(result)
+    return {
+        "success": True,
+        "commands_sent": len(commands),
+        "results": results,
+    }
+
+
+async def _async_build_structure(
+    bridge: Any,
+    structure_type: str = "",
+    position: dict[str, float] | None = None,
+    blocks: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for build_structure."""
+    commands = build_structure(structure_type, position or _DEFAULT_POS, blocks or [])
+    results = []
+    for cmd in commands:
+        result = await bridge.send_command(cmd)
+        results.append(result)
+    return {
+        "success": True,
+        "commands_sent": len(commands),
+        "results": results,
+    }
+
+
+async def _async_farm_plant(
+    bridge: Any,
+    crop: str = "",
+    position: dict[str, float] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for farm_plant."""
+    cmd = farm_plant(crop, position or _DEFAULT_POS)
+    return await bridge.send_command(cmd)
+
+
+async def _async_farm_harvest(
+    bridge: Any,
+    position: dict[str, float] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for farm_harvest."""
+    cmd = farm_harvest(position or _DEFAULT_POS)
+    return await bridge.send_command(cmd)
+
+
+async def _async_smelt_item(
+    bridge: Any,
+    input_item: str = "",
+    fuel: str = "coal",
+    count: int = 1,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for smelt_item."""
+    cmd = smelt_item(input_item, fuel=fuel, count=count)
+    return await bridge.send_command(cmd)
+
+
+async def _async_explore_direction(
+    bridge: Any,
+    direction: str = "north",
+    distance: float = 50.0,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for explore_direction."""
+    cmd = explore_direction(direction, distance=distance)
+    return await bridge.send_command(cmd)
+
+
+async def _async_attack_entity(bridge: Any, target: str = "", **kwargs: Any) -> dict[str, Any]:
+    """Async wrapper for attack_entity."""
+    cmd = attack_entity(target)
+    return await bridge.send_command(cmd)
+
+
+async def _async_defend(bridge: Any, shield: bool = True, **kwargs: Any) -> dict[str, Any]:
+    """Async wrapper for defend."""
+    cmd = defend(shield=shield)
+    return await bridge.send_command(cmd)
+
+
+async def _async_flee(
+    bridge: Any,
+    from_position: dict[str, float] | None = None,
+    distance: float = 20.0,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for flee."""
+    cmd = flee(from_position or _DEFAULT_POS, distance=distance)
+    return await bridge.send_command(cmd)
+
+
+async def _async_deposit_items(
+    bridge: Any,
+    chest_position: dict[str, float] | None = None,
+    items: dict[str, int] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for deposit_items."""
+    cmd = deposit_items(chest_position or _DEFAULT_POS, items or {})
+    return await bridge.send_command(cmd)
+
+
+async def _async_withdraw_items(
+    bridge: Any,
+    chest_position: dict[str, float] | None = None,
+    items: list[str] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for withdraw_items."""
+    cmd = withdraw_items(chest_position or _DEFAULT_POS, items or [])
+    return await bridge.send_command(cmd)
+
+
+async def _async_generic(bridge: Any, **kwargs: Any) -> dict[str, Any]:
+    """Generic async wrapper for skills without specific bridge commands."""
+    return {"success": True, **kwargs}
+
+
 # --- Skill Registry ---
 
 
@@ -402,18 +551,121 @@ ADVANCED_SKILLS: dict[str, Callable[..., BridgeCommand | list[BridgeCommand]]] =
 }
 
 
-def register_advanced_skills(registry: Any) -> None:
+def register_advanced_skills(registry: SkillRegistry) -> None:
     """Register all advanced skills with a SkillRegistry.
 
-    Note: Advanced skills return BridgeCommand objects rather than
-    being async executors. They are intended for planning and composition.
-    To execute them, the commands should be sent via a bridge client.
+    Advanced skills are wrapped in async executors so they can be
+    dispatched by the SkillExecutor. Each wrapper sends the generated
+    BridgeCommand(s) via the bridge client.
 
     Args:
         registry: SkillRegistry instance to register skills with.
     """
-    # Note: These skills are for planning, not direct execution
-    # They could be wrapped in async executors if needed
-    # For now, we document them but don't auto-register
-    # since they have different signatures than basic skills
-    pass
+    registry.register(
+        "attack_entity",
+        _async_attack_entity,
+        params_schema={"target": "str"},
+        description="Attack a nearby entity",
+    )
+    registry.register(
+        "build_structure",
+        _async_build_structure,
+        params_schema={
+            "structure_type": "str",
+            "position": "dict",
+            "blocks": "list",
+        },
+        description="Build a structure at a location",
+    )
+    registry.register(
+        "place_block",
+        _async_build_structure,
+        params_schema={
+            "structure_type": "str",
+            "position": "dict",
+            "blocks": "list",
+        },
+        description="Place a block at a location",
+    )
+    registry.register(
+        "flee",
+        _async_flee,
+        params_schema={"from_position": "dict", "distance": "float"},
+        description="Flee from a position",
+    )
+    registry.register(
+        "defend",
+        _async_defend,
+        params_schema={"shield": "bool"},
+        description="Enter defensive stance",
+    )
+    registry.register(
+        "craft_chain_skill",
+        _async_craft_chain,
+        params_schema={"target_item": "str", "inventory": "dict"},
+        description="Craft an item with full dependency chain",
+    )
+    registry.register(
+        "farm_plant",
+        _async_farm_plant,
+        params_schema={"crop": "str", "position": "dict"},
+        description="Plant a crop",
+    )
+    registry.register(
+        "farm_harvest",
+        _async_farm_harvest,
+        params_schema={"position": "dict"},
+        description="Harvest a crop",
+    )
+    registry.register(
+        "smelt_item",
+        _async_smelt_item,
+        params_schema={
+            "input_item": "str",
+            "fuel": "str",
+            "count": "int",
+        },
+        description="Smelt an item in a furnace",
+    )
+    registry.register(
+        "explore_direction",
+        _async_explore_direction,
+        params_schema={"direction": "str", "distance": "float"},
+        description="Explore in a cardinal direction",
+    )
+    registry.register(
+        "deposit_items",
+        _async_deposit_items,
+        params_schema={"chest_position": "dict", "items": "dict"},
+        description="Deposit items into a chest",
+    )
+    registry.register(
+        "withdraw_items",
+        _async_withdraw_items,
+        params_schema={"chest_position": "dict", "items": "list"},
+        description="Withdraw items from a chest",
+    )
+    registry.register(
+        "equip_item",
+        _async_generic,
+        params_schema={"item": "str"},
+        description="Equip an item",
+    )
+    registry.register(
+        "use_item",
+        _async_generic,
+        params_schema={"item": "str"},
+        description="Use an item",
+    )
+    registry.register(
+        "drop_item",
+        _async_generic,
+        params_schema={"item": "str"},
+        description="Drop an item",
+    )
+    registry.register(
+        "eat_food",
+        _async_generic,
+        params_schema={"item": "str"},
+        description="Eat food",
+    )

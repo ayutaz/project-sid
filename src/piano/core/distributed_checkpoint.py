@@ -318,7 +318,7 @@ class DistributedCheckpointManager:
         shard_dir = self._shard_dir(shard_id)
         shard_dir.mkdir(parents=True, exist_ok=True)
         path = self._checkpoint_path(shard_id, checkpoint_id)
-        path.write_text(payload, encoding="utf-8")
+        await asyncio.to_thread(path.write_text, payload, encoding="utf-8")
 
         self.logger.info(
             "shard_checkpoint_saved",
@@ -356,7 +356,7 @@ class DistributedCheckpointManager:
             msg = f"Checkpoint {checkpoint_id!r} not found for shard {shard_id}"
             raise FileNotFoundError(msg)
 
-        raw = path.read_text(encoding="utf-8")
+        raw = await asyncio.to_thread(path.read_text, encoding="utf-8")
         parsed = json.loads(raw)
         data = _ShardCheckpointData.model_validate(parsed)
         self.logger.info(
@@ -492,11 +492,12 @@ class ShardCheckpointCoordinator:
         """
         self._manager.schedule_checkpoint(shard_ids)
 
-        results: list[CheckpointInfo] = []
-        for sid in shard_ids:
-            states = shard_agent_states.get(sid, {})
-            info = await self._manager.save_shard(sid, states)
-            results.append(info)
+        # Parallelize shard saves
+        save_tasks = [
+            self._manager.save_shard(sid, shard_agent_states.get(sid, {}))
+            for sid in shard_ids
+        ]
+        results = list(await asyncio.gather(*save_tasks))
 
         # Check skew between first and last checkpoint
         if len(results) >= 2:

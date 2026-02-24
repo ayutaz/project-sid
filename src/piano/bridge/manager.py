@@ -32,6 +32,15 @@ class BridgeManager:
         connect_retry_count: int = 5,
         tls_config: dict[str, str] | None = None,
     ) -> None:
+        if base_command_port == base_event_port:
+            raise ValueError(
+                f"base_command_port and base_event_port must differ, "
+                f"got {base_command_port} for both"
+            )
+        if abs(base_command_port - base_event_port) < 1:
+            raise ValueError(
+                f"Port ranges overlap: cmd={base_command_port}, evt={base_event_port}"
+            )
         self._host = host
         self._base_cmd_port = base_command_port
         self._base_evt_port = base_event_port
@@ -115,11 +124,15 @@ class BridgeManager:
         await asyncio.gather(*[_disconnect_one(aid, br) for aid, br in self._bridges.items()])
 
     async def health_check(self) -> dict[str, bool]:
-        """Ping all bridges and return status."""
-        results: dict[str, bool] = {}
-        for agent_id, bridge in self._bridges.items():
+        """Ping all bridges in parallel and return status."""
+
+        async def _check_one(agent_id: str, bridge: BridgeClient) -> tuple[str, bool]:
             try:
-                results[agent_id] = await bridge.ping()
+                return agent_id, await bridge.ping()
             except Exception:
-                results[agent_id] = False
-        return results
+                return agent_id, False
+
+        pairs = await asyncio.gather(
+            *[_check_one(aid, br) for aid, br in self._bridges.items()]
+        )
+        return dict(pairs)

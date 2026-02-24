@@ -13,6 +13,7 @@ from piano.bridge.protocol import (
     EventType,
     ProtocolSerializer,
     WorldQuery,
+    WorldQueryType,
 )
 from piano.bridge.types import BridgeStatus
 from piano.bridge.velocity import (
@@ -44,4 +45,5 @@ __all__ = [
     "VelocityConfig",
     "VelocityProxyManager",
     "WorldQuery",
+    "WorldQueryType",
 ]

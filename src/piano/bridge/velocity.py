@@ -15,12 +15,12 @@ __all__ = [
     "VelocityProxyManager",
 ]
 
+import logging
 from enum import StrEnum
 
-import structlog
 from pydantic import BaseModel, Field
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 # --- Enums ---
@@ -133,10 +133,10 @@ class VelocityProxyManager:
         """
         if server_name in self._servers:
             logger.info(
-                "updating_existing_server",
-                server=server_name,
-                host=host,
-                port=port,
+                "Updating existing server %s host=%s port=%d",
+                server_name,
+                host,
+                port,
             )
             self._servers[server_name] = ServerConfig(
                 name=server_name,
@@ -149,7 +149,7 @@ class VelocityProxyManager:
 
         config = ServerConfig(name=server_name, host=host, port=port)
         self._add_server(config)
-        logger.info("server_registered", server=server_name, host=host, port=port)
+        logger.info("Server registered: %s host=%s port=%d", server_name, host, port)
 
     def unregister_server(self, server_name: str) -> None:
         """Unregister a backend server and reassign its agents.
@@ -187,9 +187,9 @@ class VelocityProxyManager:
                     self._assign_agent(agent_id, new_server)
 
         logger.info(
-            "server_unregistered",
-            server=server_name,
-            orphaned_agents=len(orphaned_agents),
+            "Server unregistered: %s orphaned_agents=%d",
+            server_name,
+            len(orphaned_agents),
         )
 
     # --- Agent assignment ---
@@ -222,9 +222,9 @@ class VelocityProxyManager:
         server_name = self._select_server(agent_id)
         self._assign_agent(agent_id, server_name)
         logger.debug(
-            "agent_assigned",
-            agent_id=agent_id,
-            server=server_name,
+            "Agent assigned: %s -> %s",
+            agent_id,
+            server_name,
         )
         return server_name
 
@@ -359,9 +359,9 @@ class VelocityProxyManager:
             raise KeyError(f"Server '{server_name}' is not registered")
         self._server_health[server_name] = is_healthy
         logger.info(
-            "server_health_updated",
-            server=server_name,
-            is_healthy=is_healthy,
+            "Server health updated: %s is_healthy=%s",
+            server_name,
+            is_healthy,
         )
 
     # --- Rebalancing ---
@@ -378,7 +378,7 @@ class VelocityProxyManager:
         healthy_servers = [name for name in self._servers if self._server_health.get(name, False)]
 
         if not healthy_servers:
-            logger.warning("rebalance_skipped", reason="no healthy servers")
+            logger.warning("Rebalance skipped: no healthy servers")
             return {}
 
         total_agents = self.total_agents
@@ -421,21 +421,18 @@ class VelocityProxyManager:
                     if agent_id not in excess_agents:
                         excess_agents.append(agent_id)
 
-        # Remove old assignments for excess agents
-        for agent_id in excess_agents:
-            self._remove_agent_assignment(agent_id)
-
         # Reassign excess agents to underloaded servers
+        # Remove old assignment and immediately reassign to avoid orphaned agents
         moves: dict[str, str] = {}
         for agent_id in excess_agents:
-            # Recalculate least loaded among healthy servers
+            self._remove_agent_assignment(agent_id)
             target_server = self._pick_least_loaded_server()
             if target_server is None:
                 break
             self._assign_agent(agent_id, target_server)
             moves[agent_id] = target_server
 
-        logger.info("rebalance_complete", moves=len(moves))
+        logger.info("Rebalance complete: %d moves", len(moves))
         return moves
 
     # --- Shard management ---
@@ -453,7 +450,7 @@ class VelocityProxyManager:
         if server_name not in self._servers:
             raise KeyError(f"Server '{server_name}' is not registered")
         self._shard_map[shard_id] = server_name
-        logger.debug("shard_assigned", shard_id=shard_id, server=server_name)
+        logger.debug("Shard assigned: %d -> %s", shard_id, server_name)
 
     def get_shard_map(self) -> dict[int, str]:
         """Return a copy of the current shard-to-server mapping."""

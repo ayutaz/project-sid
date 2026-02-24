@@ -115,6 +115,11 @@ class SkillExecutor(Module):
         """
         action = decision.action
 
+        # Validate non-empty action
+        if not action:
+            logger.debug("Empty action in decision, skipping")
+            return
+
         # Translate CC action name to skill registry name
         mapped = map_action(action)
         if mapped is None:
@@ -158,9 +163,13 @@ class SkillExecutor(Module):
             The result dict from the skill execution.
         """
         skill = self._registry.get(action)
+
+        # Validate and adapt parameters
+        validated_params = self._validate_params(action, params, skill.params_schema)
+
         try:
             result = await asyncio.wait_for(
-                skill.execute_fn(self._bridge, **params),
+                skill.execute_fn(self._bridge, **validated_params),
                 timeout=self._timeout_s,
             )
             await self._record_action(
@@ -198,13 +207,49 @@ class SkillExecutor(Module):
             )
             return {"success": False, "error": str(exc)}
 
+    def _validate_params(
+        self,
+        action: str,
+        params: dict[str, Any],
+        params_schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate and adapt parameters to match the skill's schema.
+
+        If the skill has a params_schema, only pass known parameters and
+        log warnings about unknown ones. If no schema, pass params through.
+
+        Args:
+            action: Skill name for logging.
+            params: Raw parameters from the CC decision.
+            params_schema: The skill's declared parameter schema.
+
+        Returns:
+            Filtered parameters dict.
+        """
+        if not params_schema:
+            return params
+
+        known_keys = set(params_schema.keys())
+        provided_keys = set(params.keys())
+
+        unknown = provided_keys - known_keys
+        if unknown:
+            logger.warning(
+                "Skill '%s' received unknown params %s, ignoring them",
+                action,
+                unknown,
+            )
+
+        return {k: v for k, v in params.items() if k in known_keys}
+
     async def _cancel_current(self) -> None:
         """Cancel the currently running skill task, if any."""
         if self._current_task is not None and not self._current_task.done():
-            self._current_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._current_task
+            task = self._current_task
             self._current_task = None
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _record_action(
         self,
@@ -227,7 +272,10 @@ class SkillExecutor(Module):
             actual_result=actual,
             success=success,
         )
-        await self._sas.add_action(entry)
+        try:
+            await self._sas.add_action(entry)
+        except Exception:
+            logger.exception("Failed to record action '%s' to SAS", action)
 
     async def shutdown(self) -> None:
         """Cancel any running skill on shutdown."""

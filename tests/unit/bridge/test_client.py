@@ -673,3 +673,105 @@ class TestBridgeClientEdgeCases:
                 await client.send_command(cmd)
 
             await client.disconnect()
+
+    async def test_stop_event_listener_cancels_task(self, connected_client) -> None:
+        """stop_event_listener() cancels the running event listener task."""
+        client, _, sub_mock = connected_client
+
+        async def recv_forever() -> dict[str, Any]:
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = recv_forever
+
+        async def on_event(event: BridgeEvent) -> None:
+            pass  # pragma: no cover
+
+        await client.start_event_listener(on_event)
+        assert client._event_task is not None
+        task = client._event_task
+
+        await client.stop_event_listener()
+
+        assert task.done()
+        assert client._event_task is None
+
+    async def test_stop_event_listener_when_no_task(self, connected_client) -> None:
+        """stop_event_listener() is safe to call when no task is running."""
+        client, _, _ = connected_client
+        assert client._event_task is None
+        await client.stop_event_listener()  # Should not raise
+        assert client._event_task is None
+
+    async def test_req_socket_recovery_after_recv_timeout(self, connected_client) -> None:
+        """After zmq.Again on recv, always reconnect the cmd socket."""
+        client, cmd_mock, _ = connected_client
+
+        reconnect_count = 0
+
+        async def tracking_reconnect() -> None:
+            nonlocal reconnect_count
+            reconnect_count += 1
+            client._cmd_socket = cmd_mock
+            client._status = BridgeStatus.CONNECTED
+
+        # Fail on recv (after successful send) to simulate partial REQ/REP
+        cmd_mock.send_string = AsyncMock()
+        cmd_mock.recv_json = AsyncMock(side_effect=zmq.Again("timeout"))
+        client._reconnect_cmd_socket = tracking_reconnect
+
+        cmd = BridgeCommand(action="ping", params={})
+        with pytest.raises(TimeoutError):
+            await client.send_command(cmd)
+
+        # Should have reconnected on every attempt (including the last one)
+        from piano.bridge.client import MAX_RETRIES
+        assert reconnect_count == MAX_RETRIES
+
+    async def test_event_listener_backoff_on_repeated_errors(self, connected_client) -> None:
+        """Event listener sleeps after 5 consecutive errors."""
+        client, _, sub_mock = connected_client
+
+        call_count = 0
+
+        async def error_then_block() -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 6:
+                raise RuntimeError("parse error")
+            # Block forever after errors
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = error_then_block
+
+        async def on_event(event: BridgeEvent) -> None:
+            pass  # pragma: no cover
+
+        await client.start_event_listener(on_event)
+        # Wait for errors to accumulate and backoff to trigger
+        await asyncio.sleep(1.5)
+
+        # Verify error counter incremented
+        assert client._evt_error_count >= 5
+
+        # Clean up
+        await client.stop_event_listener()
+
+    async def test_repr_shows_urls(self, connected_client) -> None:
+        """__repr__ includes command and event URLs."""
+        client, _, _ = connected_client
+        r = repr(client)
+        assert "tcp://127.0.0.1:5555" in r
+        assert "tcp://127.0.0.1:5556" in r
+
+    async def test_connect_reuses_existing_context(self, mock_ctx: MagicMock) -> None:
+        """If a context already exists, connect() reuses it instead of creating a new one."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient()
+            # Pre-set context (simulating re-connect after disconnect that didn't clear it)
+            client._ctx = mock_ctx
+            await client.connect()
+            assert client._ctx is mock_ctx
+            assert client.status == BridgeStatus.CONNECTED
+            await client.disconnect()

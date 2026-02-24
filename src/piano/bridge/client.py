@@ -56,6 +56,7 @@ class BridgeClient:
         self._sub_socket: zmq.asyncio.Socket | None = None
         self._event_task: asyncio.Task[None] | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._evt_error_count = 0
 
     # --- Properties ---------------------------------------------------------
 
@@ -66,6 +67,9 @@ class BridgeClient:
 
     # --- Connection lifecycle -----------------------------------------------
 
+    def __repr__(self) -> str:
+        return f"BridgeClient(cmd={self._command_url!r}, evt={self._event_url!r})"
+
     async def connect(self) -> None:
         """Connect to the bridge process.
 
@@ -74,7 +78,8 @@ class BridgeClient:
         if self._status == BridgeStatus.CONNECTED:
             return
 
-        self._ctx = zmq.asyncio.Context()
+        if self._ctx is None:
+            self._ctx = zmq.asyncio.Context()
 
         # REQ socket for commands
         self._cmd_socket = self._ctx.socket(zmq.REQ)
@@ -150,9 +155,10 @@ class BridgeClient:
                     MAX_RETRIES,
                     cmd.action,
                 )
+                # Always reconnect after zmq.Again to reset REQ socket state
+                self._status = BridgeStatus.RECONNECTING
+                await self._reconnect_cmd_socket()
                 if attempt < MAX_RETRIES:
-                    self._status = BridgeStatus.RECONNECTING
-                    await self._reconnect_cmd_socket()
                     await asyncio.sleep(backoff)
                     backoff *= 2
                 else:
@@ -175,7 +181,9 @@ class BridgeClient:
         """Tear down and recreate the command socket."""
         if self._cmd_socket:
             self._cmd_socket.close(linger=0)
+            self._cmd_socket = None
         if self._ctx is None:
+            self._status = BridgeStatus.DISCONNECTED
             raise ConnectionError("ZMQ context is not available")
         self._cmd_socket = self._ctx.socket(zmq.REQ)
         self._cmd_socket.setsockopt(zmq.RCVTIMEO, self._timeout_ms)
@@ -199,6 +207,9 @@ class BridgeClient:
         if self._sub_socket is None:
             raise ConnectionError("Bridge client is not connected")
 
+        _max_consecutive_errors = 5
+        _backoff_sleep_s = 1.0
+
         async def _listen() -> None:
             assert self._sub_socket is not None
             while True:
@@ -206,12 +217,29 @@ class BridgeClient:
                     raw = await self._sub_socket.recv_json()
                     event = BridgeEvent.model_validate(raw)
                     await callback(event)
+                    self._evt_error_count = 0
                 except asyncio.CancelledError:
                     break
                 except Exception:
                     logger.exception("Error processing bridge event")
+                    self._evt_error_count += 1
+                    if self._evt_error_count >= _max_consecutive_errors:
+                        logger.warning(
+                            "Event listener hit %d consecutive errors, backing off %.1fs",
+                            self._evt_error_count,
+                            _backoff_sleep_s,
+                        )
+                        await asyncio.sleep(_backoff_sleep_s)
 
         self._event_task = asyncio.create_task(_listen())
+
+    async def stop_event_listener(self) -> None:
+        """Cancel the event listener background task if running."""
+        if self._event_task and not self._event_task.done():
+            self._event_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._event_task
+        self._event_task = None
 
     # --- Health check -------------------------------------------------------
 

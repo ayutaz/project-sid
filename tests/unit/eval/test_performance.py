@@ -279,6 +279,20 @@ class TestPerformanceBenchmark:
         assert result.agent_count == 1
         assert abs(result.avg_tick_latency_ms - 5.0) < 1e-10
 
+    def test_compute_result_raises_runtime_error_without_start(self):
+        """_compute_result raises RuntimeError when start_time is None."""
+        bench = PerformanceBenchmark()
+        with pytest.raises(RuntimeError, match="start_time is None"):
+            bench._compute_result()
+
+    def test_compute_result_raises_runtime_error_without_stop(self):
+        """_compute_result raises RuntimeError when stop_time is None."""
+        bench = PerformanceBenchmark()
+        bench.start()
+        with pytest.raises(RuntimeError, match="stop_time is None"):
+            bench._compute_result()
+        bench.stop()  # cleanup
+
 
 # ---------------------------------------------------------------------------
 # RegressionDetector
@@ -425,6 +439,18 @@ class TestRegressionDetector:
         report = detector.check_regression(_make_result(avg_tick_latency_ms=5.0))
         lat_items = [r for r in report.regressions if r.metric_name == "avg_tick_latency_ms"]
         assert len(lat_items) == 1
+
+    def test_zero_baseline_uses_finite_change_pct(self):
+        """Zero baseline uses finite 99999.0 instead of float('inf')."""
+        detector = RegressionDetector()
+        detector.set_baseline(_make_result(avg_tick_latency_ms=0.0))
+        report = detector.check_regression(_make_result(avg_tick_latency_ms=5.0))
+        lat_items = [r for r in report.regressions if r.metric_name == "avg_tick_latency_ms"]
+        assert len(lat_items) == 1
+        assert lat_items[0].change_pct == 99999.0
+        import math
+
+        assert not math.isinf(lat_items[0].change_pct)
 
 
 # ---------------------------------------------------------------------------

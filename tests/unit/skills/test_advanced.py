@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from piano.core.types import BridgeCommand
@@ -101,6 +103,41 @@ class TestCraftChain:
         commands = craft_chain("stone_sword", {"cobblestone": 5, "log": 2})
         assert all(isinstance(cmd, BridgeCommand) for cmd in commands)
         assert all(cmd.action == "craft" for cmd in commands)
+
+    def test_craft_chain_cycle_detection(self) -> None:
+        """Craft chain should handle cycles without infinite recursion."""
+        # Manually inject a cyclic recipe temporarily
+        original = CraftingRecipes.RECIPES.copy()
+        try:
+            CraftingRecipes.RECIPES["cycle_a"] = {"cycle_b": 1}
+            CraftingRecipes.RECIPES["cycle_b"] = {"cycle_a": 1}
+            # Should not hang or crash
+            commands = craft_chain("cycle_a", {})
+            # Should produce some commands (at least for cycle_a itself)
+            assert isinstance(commands, list)
+        finally:
+            CraftingRecipes.RECIPES.clear()
+            CraftingRecipes.RECIPES.update(original)
+
+    def test_craft_chain_max_depth(self) -> None:
+        """Craft chain respects max_depth parameter."""
+        # With max_depth=0, should return empty
+        commands = craft_chain("wooden_pickaxe", {}, max_depth=0)
+        assert commands == []
+
+    def test_craft_chain_max_depth_1(self) -> None:
+        """With max_depth=1, only the top-level craft is produced."""
+        commands = craft_chain("wooden_pickaxe", {"planks": 10, "stick": 10}, max_depth=1)
+        # Has all materials, so only needs the final craft
+        assert len(commands) == 1
+        assert commands[0].params["item_name"] == "wooden_pickaxe"
+
+    def test_craft_chain_deep_recursion_limited(self) -> None:
+        """Deep chain is limited by max_depth."""
+        # stick needs planks, planks needs log. With max_depth=1, sub-crafts limited
+        commands = craft_chain("stick", {}, max_depth=1)
+        # Should still produce at least the stick craft itself
+        assert any(c.params["item_name"] == "stick" for c in commands)
 
 
 class TestBuildStructure:
@@ -324,10 +361,64 @@ class TestAdvancedSkillsDict:
 
 class TestRegisterAdvancedSkills:
     def test_register_advanced_skills_no_error(self) -> None:
-        # Currently this is a no-op, but test it doesn't raise
         registry = SkillRegistry()
         register_advanced_skills(registry)
-        # No assertion needed, just verify no exception
+        # Should have registered skills
+        assert len(registry) > 0
+
+    def test_register_advanced_skills_registers_attack_entity(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "attack_entity" in registry
+
+    def test_register_advanced_skills_registers_flee(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "flee" in registry
+
+    def test_register_advanced_skills_registers_defend(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "defend" in registry
+
+    def test_register_advanced_skills_registers_build(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "build_structure" in registry
+
+    def test_register_advanced_skills_registers_farming(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "farm_plant" in registry
+        assert "farm_harvest" in registry
+
+    def test_register_advanced_skills_all_callable(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        for name in registry.list_skills():
+            skill = registry.get(name)
+            assert callable(skill.execute_fn)
+
+    async def test_async_attack_entity_wrapper(self) -> None:
+        """Async wrapper for attack_entity sends commands via bridge."""
+
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("attack_entity")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, target="zombie")
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "attack"
 
 
 class TestIntegrationScenarios:

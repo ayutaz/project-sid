@@ -80,11 +80,26 @@ class TestToPromptModifier:
     """Test personality description generation for LLM prompts."""
 
     def test_balanced_personality_prompt(self):
-        """Test prompt for balanced personality (all 0.5)."""
+        """Test prompt for balanced personality (all 0.5) includes moderate text."""
         profile = PersonalityProfile()
         prompt = profile.to_prompt_modifier()
-        assert "balanced personality" in prompt.lower()
-        assert "moderate traits" in prompt.lower()
+        assert "moderate" in prompt.lower()
+
+    def test_moderate_trait_text(self):
+        """Test that traits in 0.3-0.7 range include 'moderate' descriptions."""
+        profile = PersonalityProfile(
+            openness=0.5,
+            conscientiousness=0.5,
+            extraversion=0.5,
+            agreeableness=0.5,
+            neuroticism=0.5,
+        )
+        prompt = profile.to_prompt_modifier()
+        assert "moderate openness" in prompt.lower()
+        assert "moderate conscientiousness" in prompt.lower()
+        assert "moderate extraversion" in prompt.lower()
+        assert "moderate agreeableness" in prompt.lower()
+        assert "moderate neuroticism" in prompt.lower()
 
     def test_high_extraversion_prompt(self):
         """Test prompt includes extraversion description."""

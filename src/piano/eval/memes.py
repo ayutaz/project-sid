@@ -28,7 +28,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = structlog.get_logger(__name__)
 
@@ -50,6 +50,8 @@ class MemeCategory(StrEnum):
 
 class Meme(BaseModel):
     """A cultural meme that can propagate between agents."""
+
+    model_config = ConfigDict(frozen=False)
 
     id: str = Field(default_factory=lambda: uuid4().hex[:12])
     content: str = Field(description="Textual content / description of the meme")
@@ -110,6 +112,7 @@ class MemeTracker:
         self._memes: dict[str, Meme] = {}
         self._transmissions: list[TransmissionRecord] = []
         self._similarity_threshold = similarity_threshold
+        self._similarity_cache: dict[tuple[str, str], float] = {}
 
     # -- properties ----------------------------------------------------------
 
@@ -162,7 +165,27 @@ class MemeTracker:
         utterance_lower = utterance.lower()
 
         for meme in self._memes.values():
-            ratio = SequenceMatcher(None, meme.content.lower(), utterance_lower).ratio()
+            meme_lower = meme.content.lower()
+
+            # Early exit: SequenceMatcher ratio cannot exceed
+            # 2 * min(len_a, len_b) / (len_a + len_b), so skip when
+            # the length difference makes it impossible to reach threshold.
+            len_a = len(meme_lower)
+            len_b = len(utterance_lower)
+            total_len = len_a + len_b
+            if total_len > 0:
+                max_possible = 2.0 * min(len_a, len_b) / total_len
+                if max_possible < self._similarity_threshold:
+                    continue
+
+            cache_key = (meme_lower, utterance_lower)
+            cached = self._similarity_cache.get(cache_key)
+            if cached is not None:
+                ratio = cached
+            else:
+                ratio = SequenceMatcher(None, meme_lower, utterance_lower).ratio()
+                self._similarity_cache[cache_key] = ratio
+
             if ratio >= self._similarity_threshold:
                 meme.carriers.add(agent_id)
                 matched.append(meme)
@@ -321,7 +344,7 @@ class MemeAnalyzer:
     def jaccard_similarity(town_a_memes: set[str], town_b_memes: set[str]) -> float:
         """Compute the Jaccard index between two meme sets.
 
-        J(A, B) = |A & B| / |A | B|
+        J(A, B) = |A & B| / |A | B| (union)
 
         Args:
             town_a_memes: Set of meme IDs held by town A.

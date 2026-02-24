@@ -48,7 +48,7 @@ class ShardConfig(BaseModel):
     """
 
     num_shards: int = Field(default=4, ge=1)
-    strategy: str = Field(default="consistent_hash")
+    strategy: ShardingStrategy = Field(default=ShardingStrategy.CONSISTENT_HASH)
 
 
 class ShardStats(BaseModel):
@@ -111,6 +111,8 @@ class ShardManager:
         self._shard_centers: dict[int, dict[str, float]] = {}
         # Spatial: agent_id -> position {x, y, z}
         self._agent_positions: dict[str, dict[str, float]] = {}
+        # O(S) shard agent count tracking
+        self._shard_agent_counts: dict[int, int] = {i: 0 for i in range(self._num_shards)}
 
         logger.info(
             "shard_manager_initialized",
@@ -158,6 +160,7 @@ class ShardManager:
 
         shard_id = self._compute_shard(agent_id)
         self._assignments[agent_id] = shard_id
+        self._shard_agent_counts[shard_id] = self._shard_agent_counts.get(shard_id, 0) + 1
 
         logger.debug(
             "agent_assigned_to_shard",
@@ -202,6 +205,9 @@ class ShardManager:
     def get_shard_stats(self) -> dict[int, ShardStats]:
         """Compute per-shard statistics.
 
+        Uses the maintained ``_shard_agent_counts`` dict for O(S) lookup
+        instead of scanning all assignments.
+
         Returns:
             Mapping of shard_id to :class:`ShardStats`.
         """
@@ -210,7 +216,7 @@ class ShardManager:
 
         stats: dict[int, ShardStats] = {}
         for shard_id in range(self._num_shards):
-            count = sum(1 for sid in self._assignments.values() if sid == shard_id)
+            count = self._shard_agent_counts.get(shard_id, 0)
             load = count / ideal if ideal > 0 else 0.0
             stats[shard_id] = ShardStats(
                 shard_id=shard_id,
@@ -243,12 +249,14 @@ class ShardManager:
         self._num_shards = new_num_shards
         self._assignments.clear()
         self._rr_counter = 0
+        self._shard_agent_counts = {i: 0 for i in range(new_num_shards)}
 
         # Reassign all agents in deterministic (sorted) order
         moves: dict[str, tuple[int, int]] = {}
         for agent_id in sorted(old_assignments):
             new_shard = self._compute_shard(agent_id)
             self._assignments[agent_id] = new_shard
+            self._shard_agent_counts[new_shard] = self._shard_agent_counts.get(new_shard, 0) + 1
             old_shard = old_assignments[agent_id]
             if old_shard != new_shard:
                 moves[agent_id] = (old_shard, new_shard)
@@ -279,6 +287,8 @@ class ShardManager:
 
         shard_id = self._assignments.pop(agent_id)
         self._agent_positions.pop(agent_id, None)
+        if shard_id in self._shard_agent_counts:
+            self._shard_agent_counts[shard_id] = max(0, self._shard_agent_counts[shard_id] - 1)
 
         logger.debug("agent_removed_from_shard", agent_id=agent_id, shard_id=shard_id)
         return shard_id
@@ -342,8 +352,11 @@ class ShardManager:
         old_shard = self._assignments[agent_id]
         # Temporarily remove so _compute_shard doesn't short-circuit
         del self._assignments[agent_id]
+        if old_shard in self._shard_agent_counts:
+            self._shard_agent_counts[old_shard] = max(0, self._shard_agent_counts[old_shard] - 1)
         new_shard = self._compute_shard(agent_id)
         self._assignments[agent_id] = new_shard
+        self._shard_agent_counts[new_shard] = self._shard_agent_counts.get(new_shard, 0) + 1
         return old_shard, new_shard
 
     # -- Private helpers ----------------------------------------------------
@@ -378,6 +391,11 @@ class ShardManager:
         pos = self._agent_positions.get(agent_id)
         if pos is None or not self._shard_centers:
             # Fallback to hash-based when position data is unavailable
+            logger.debug(
+                "spatial_shard_fallback",
+                agent_id=agent_id,
+                reason="no_position" if pos is None else "no_shard_centers",
+            )
             return self._hash_shard(agent_id)
 
         best_shard = 0

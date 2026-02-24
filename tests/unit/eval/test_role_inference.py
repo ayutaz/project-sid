@@ -359,6 +359,48 @@ class TestRoleInferencePipeline:
         results = await pipeline.infer_roles_batch([])
         assert results == []
 
+    async def test_infer_roles_batch_concurrency(
+        self,
+        mock_llm: MockLLMProvider,
+    ):
+        """Batch inference runs concurrently with semaphore limit of 5."""
+        import asyncio
+
+        concurrency_tracker: list[int] = []
+        max_concurrent = 0
+        current_concurrent = 0
+        lock = asyncio.Lock()
+
+        original_complete = mock_llm.complete
+
+        async def tracked_complete(request):
+            nonlocal max_concurrent, current_concurrent
+            async with lock:
+                current_concurrent += 1
+                concurrency_tracker.append(current_concurrent)
+                if current_concurrent > max_concurrent:
+                    max_concurrent = current_concurrent
+            await asyncio.sleep(0.01)
+            result = await original_complete(request)
+            async with lock:
+                current_concurrent -= 1
+            return result
+
+        mock_llm.complete = tracked_complete  # type: ignore[assignment]
+        pipeline = RoleInferencePipeline(mock_llm)
+
+        requests = [
+            _make_request(agent_id=f"agent-{i}", goals=[f"goal-{i}"])
+            for i in range(10)
+        ]
+        results = await pipeline.infer_roles_batch(requests)
+
+        assert len(results) == 10
+        # Verify concurrency was actually used (more than 1 at a time)
+        assert max_concurrent > 1
+        # Verify semaphore limits to 5
+        assert max_concurrent <= 5
+
 
 # ---------------------------------------------------------------------------
 # get_role_distribution (static method)

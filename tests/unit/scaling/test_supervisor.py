@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from piano.scaling.supervisor import (
@@ -517,7 +519,7 @@ async def test_health_check_all_healthy(supervisor, mock_workers):
 
 
 async def test_health_check_all_unhealthy_worker(supervisor, mock_workers):
-    """Test health_check_all detects unhealthy worker."""
+    """Test health_check_all detects unhealthy worker and attempts restart."""
     supervisor.create_worker("worker-A")
     supervisor.create_worker("worker-B")
 
@@ -529,9 +531,13 @@ async def test_health_check_all_unhealthy_worker(supervisor, mock_workers):
     assert results["worker-A"] is True
     assert results["worker-B"] is False
 
-    # Worker state should be updated
+    # After health_check_all, unhealthy workers get restart attempted.
+    # MockWorker restart succeeds so state goes back to RUNNING
     stats = supervisor.get_worker_stats()
-    assert stats["worker-B"]["state"] == "unhealthy"
+    assert stats["worker-B"]["state"] == "running"
+    # Verify restart was attempted (stop then start)
+    assert mock_workers["worker-B"].stop_count >= 1
+    assert mock_workers["worker-B"].start_count >= 1
 
 
 async def test_health_check_all_exception(config):
@@ -687,3 +693,198 @@ async def test_auto_scaling_1000_agents():
     for s in stats.values():
         assert s["agent_count"] == 250
         assert s["utilization"] == pytest.approx(1.0)
+
+
+# --- Rebalance Coordination Tests ---
+
+
+async def test_rebalance_rollback_on_add_failure(config):
+    """Test that rebalance rolls back if adding to destination fails."""
+
+    class FailAddWorker(MockWorker):
+        """Worker that fails when trying to add a specific agent."""
+
+        def __init__(self, worker_id: str, fail_agent: str | None = None) -> None:
+            super().__init__(worker_id)
+            self.fail_agent = fail_agent
+
+        async def add_agent(self, agent_id: str, shard_id: str) -> None:
+            if agent_id == self.fail_agent:
+                raise RuntimeError("Cannot add agent")
+            await super().add_agent(agent_id, shard_id)
+
+    workers: dict[str, MockWorker] = {}
+
+    def factory(worker_id: str) -> MockWorker:
+        if worker_id == "worker-B":
+            w = FailAddWorker(worker_id, fail_agent="agent-003")
+        else:
+            w = MockWorker(worker_id)
+        workers[worker_id] = w
+        return w
+
+    supervisor = AgentSupervisor(config, worker_factory=factory)
+    supervisor.create_worker("worker-A")
+    supervisor.create_worker("worker-B")
+
+    # Put 3 agents on worker-A, 0 on worker-B
+    for agent_id in ["agent-001", "agent-002", "agent-003"]:
+        handle = supervisor._workers["worker-A"]
+        await handle.add_agent(agent_id, "shard-0")
+        supervisor._worker_info["worker-A"].agent_ids.add(agent_id)
+        supervisor._worker_info["worker-A"].shard_ids[agent_id] = "shard-0"
+        supervisor._agent_to_worker[agent_id] = "worker-A"
+
+    # Rebalance: agent-003 should fail to move to worker-B and be rolled back
+    await supervisor.rebalance()
+
+    # agent-003 should still be on worker-A (rolled back)
+    assert supervisor.get_agent_worker("agent-003") == "worker-A"
+    # Some agents may have moved successfully
+    total_a = len(supervisor._worker_info["worker-A"].agent_ids)
+    total_b = len(supervisor._worker_info["worker-B"].agent_ids)
+    assert total_a + total_b == 3  # No agents lost
+
+
+async def test_rebalance_uses_per_agent_locks(supervisor, mock_workers):
+    """Test that rebalance acquires per-agent locks."""
+    supervisor.create_worker("worker-A")
+    supervisor.create_worker("worker-B")
+
+    # Put 3 agents on worker-A
+    for agent_id in ["agent-001", "agent-002", "agent-003"]:
+        handle = supervisor._workers["worker-A"]
+        await handle.add_agent(agent_id, "shard-0")
+        supervisor._worker_info["worker-A"].agent_ids.add(agent_id)
+        supervisor._worker_info["worker-A"].shard_ids[agent_id] = "shard-0"
+        supervisor._agent_to_worker[agent_id] = "worker-A"
+
+    await supervisor.rebalance()
+
+    # Per-agent locks should have been created for moved agents
+    assert len(supervisor._agent_locks) > 0
+
+
+# --- Parallel Start/Stop Tests ---
+
+
+async def test_start_all_parallel(config):
+    """Test that start_all runs workers in parallel using asyncio.gather."""
+    start_times: dict[str, float] = {}
+    import time
+
+    class TimingWorker(MockWorker):
+        async def start(self) -> None:
+            start_times[self._worker_id] = time.monotonic()
+            await asyncio.sleep(0.05)  # Simulate startup delay
+            await super().start()
+
+    workers: dict[str, MockWorker] = {}
+
+    def factory(worker_id: str) -> MockWorker:
+        w = TimingWorker(worker_id)
+        workers[worker_id] = w
+        return w
+
+    supervisor = AgentSupervisor(config, worker_factory=factory)
+    supervisor.create_worker("worker-A")
+    supervisor.create_worker("worker-B")
+    supervisor.create_worker("worker-C")
+
+    t0 = time.monotonic()
+    await supervisor.start_all()
+    elapsed = time.monotonic() - t0
+
+    # If truly parallel, total time should be ~0.05s not ~0.15s
+    # Allow generous margin for CI
+    assert elapsed < 0.15, f"start_all took {elapsed:.2f}s, expected parallel execution"
+
+    # All workers should have started
+    for w in workers.values():
+        assert w.start_count == 1
+
+    # Cleanup: cancel health check task
+    await supervisor.stop_all()
+
+
+async def test_stop_all_parallel(config):
+    """Test that stop_all runs workers in parallel using asyncio.gather."""
+    import time
+
+    class SlowStopWorker(MockWorker):
+        async def stop(self) -> None:
+            await asyncio.sleep(0.05)
+            await super().stop()
+
+    workers: dict[str, MockWorker] = {}
+
+    def factory(worker_id: str) -> MockWorker:
+        w = SlowStopWorker(worker_id)
+        workers[worker_id] = w
+        return w
+
+    supervisor = AgentSupervisor(config, worker_factory=factory)
+    supervisor.create_worker("worker-A")
+    supervisor.create_worker("worker-B")
+    supervisor.create_worker("worker-C")
+
+    await supervisor.start_all()
+
+    t0 = time.monotonic()
+    await supervisor.stop_all()
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 0.15, f"stop_all took {elapsed:.2f}s, expected parallel execution"
+
+    for w in workers.values():
+        assert w.stop_count == 1
+
+
+# --- Background Health Check Loop Tests ---
+
+
+async def test_health_check_loop_starts_on_start_all(supervisor, mock_workers):
+    """Test that start_all starts a background health check task."""
+    supervisor.create_worker("worker-A")
+
+    await supervisor.start_all()
+
+    assert supervisor._health_check_task is not None
+    assert not supervisor._health_check_task.done()
+
+    await supervisor.stop_all()
+
+    # Health check task should have been cancelled
+    assert supervisor._health_check_task is None or supervisor._health_check_task.done()
+
+
+async def test_health_check_loop_runs_periodically():
+    """Test that the health check loop calls health_check_all periodically."""
+    config = SupervisorConfig(agents_per_worker=3, max_workers=4, health_check_interval=0.05)
+    check_count = 0
+
+    class TrackingWorker(MockWorker):
+        async def health_check(self) -> bool:
+            nonlocal check_count
+            check_count += 1
+            return True
+
+    workers: dict[str, MockWorker] = {}
+
+    def factory(worker_id: str) -> MockWorker:
+        w = TrackingWorker(worker_id)
+        workers[worker_id] = w
+        return w
+
+    supervisor = AgentSupervisor(config, worker_factory=factory)
+    supervisor.create_worker("worker-A")
+
+    await supervisor.start_all()
+
+    # Wait for at least 2 health check intervals
+    await asyncio.sleep(0.15)
+
+    await supervisor.stop_all()
+
+    # Should have been checked multiple times
+    assert check_count >= 2

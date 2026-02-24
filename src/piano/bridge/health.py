@@ -88,6 +88,9 @@ class BridgeHealthMonitor:
             status = BridgeHealthStatus.DISCONNECTED
         elif last_event is not None and last_event_age > self._stale_threshold:
             status = BridgeHealthStatus.STALE
+        elif last_event is None:
+            # Bridge is connected but no events ever received - PUB/SUB may not be working
+            status = BridgeHealthStatus.DEGRADED
         elif elapsed_ms > _DEGRADED_LATENCY_MS:
             status = BridgeHealthStatus.DEGRADED
         else:

@@ -13,6 +13,38 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+# --- Pre-compiled injection-detection patterns (used by sanitize_text) ---
+_RE_IGNORE = re.compile(
+    r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)",
+    re.IGNORECASE,
+)
+_RE_DISREGARD = re.compile(
+    r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)",
+    re.IGNORECASE,
+)
+_RE_FORGET = re.compile(
+    r"forget\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)",
+    re.IGNORECASE,
+)
+_RE_SYSTEM_COLON = re.compile(r"system\s*:\s*", re.IGNORECASE)
+_RE_SPECIAL_TOKENS = re.compile(r"<\|.*?\|>", re.IGNORECASE)
+_RE_CODE_BLOCKS = re.compile(r"```[\s\S]*?```", re.IGNORECASE)
+_RE_ROLE_TAGS = re.compile(r"</?(?:system|assistant|user)>", re.IGNORECASE)
+
+_INJECTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (_RE_IGNORE, "[filtered]"),
+    (_RE_DISREGARD, "[filtered]"),
+    (_RE_FORGET, "[filtered]"),
+    (_RE_SYSTEM_COLON, "system - "),
+    (_RE_SPECIAL_TOKENS, ""),
+    (_RE_CODE_BLOCKS, "[code block]"),
+    (_RE_ROLE_TAGS, ""),
+]
+_REPETITION_PATTERN: re.Pattern[str] = re.compile(r"(.)\1{10,}")
+_CONTROL_CHAR_PATTERN: re.Pattern[str] = re.compile(
+    r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]",
+)
+
 # --- Compression limits ---
 MAX_INVENTORY_ITEMS = 5
 MAX_NEARBY_PLAYERS = 5
@@ -43,25 +75,14 @@ def sanitize_text(text: str, max_length: int = 500) -> str:
     sanitized = text[:max_length]
 
     # Remove control characters (except newline, tab, carriage return)
-    sanitized = re.sub(r"[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]", "", sanitized)
+    sanitized = _CONTROL_CHAR_PATTERN.sub("", sanitized)
 
-    # Escape potential prompt injection patterns
     # Replace common prompt injection phrases with safe alternatives
-    injection_patterns = {
-        r"ignore\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
-        r"disregard\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
-        r"forget\s+(previous|all|above|prior)\s+(instructions?|prompts?|rules?)": "[filtered]",
-        r"system\s*:\s*": "system - ",
-        r"<\|.*?\|>": "",  # Remove special tokens like <|system|>, <|endoftext|>
-        r"```[\s\S]*?```": "[code block]",  # Remove markdown code blocks
-        r"</?(?:system|assistant|user)>": "",  # Remove XML-like tags for roles
-    }
-
-    for pattern, replacement in injection_patterns.items():
-        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    for pattern, replacement in _INJECTION_PATTERNS:
+        sanitized = pattern.sub(replacement, sanitized)
 
     # Limit excessive repetition (potential token manipulation)
-    sanitized = re.sub(r"(.)\1{10,}", r"\1\1\1", sanitized)
+    sanitized = _REPETITION_PATTERN.sub(r"\1\1\1", sanitized)
 
     return sanitized
 
@@ -307,7 +328,10 @@ class TemplateCompressor:
     def estimate_tokens(self, text: str) -> int:
         """Estimate token count from text length.
 
-        Uses a simple chars-per-token heuristic.
+        Uses a simple chars-per-token heuristic (~4 chars/token for
+        GPT-family tokenizers). This is intentionally approximate to
+        avoid the cost of loading a real tokenizer; the estimate is
+        used only for compression metrics, not billing.
         """
         if not text:
             return 0
@@ -332,7 +356,8 @@ class TemplateCompressor:
             "memory": 0.10,
         }
 
-        # Map snapshot keys to section keys
+        # Map snapshot keys to section keys.
+        # "memory" section is derived from both "working_memory" and "stm".
         snapshot_key_map = {
             "percepts": "percepts",
             "goals": "goals",
@@ -350,18 +375,27 @@ class TemplateCompressor:
         for snap_key, sec_key in snapshot_key_map.items():
             if sec_key in seen_sections:
                 continue
-            seen_sections.add(sec_key)
 
-            snap_data = snapshot.get(snap_key)
             weight = weights.get(sec_key, 0.1)
 
-            has_data = bool(snap_data)
-            if isinstance(snap_data, dict):
-                has_data = any(
-                    v is not None for v in snap_data.values()
+            # For "memory", check both working_memory and stm
+            if sec_key == "memory":
+                wm_data = snapshot.get("working_memory", [])
+                stm_data = snapshot.get("stm", [])
+                has_data = (isinstance(wm_data, list) and len(wm_data) > 0) or (
+                    isinstance(stm_data, list) and len(stm_data) > 0
                 )
-            elif isinstance(snap_data, list):
-                has_data = len(snap_data) > 0
+            else:
+                snap_data = snapshot.get(snap_key)
+                has_data = bool(snap_data)
+                if isinstance(snap_data, dict):
+                    has_data = any(
+                        v is not None for v in snap_data.values()
+                    )
+                elif isinstance(snap_data, list):
+                    has_data = len(snap_data) > 0
+
+            seen_sections.add(sec_key)
 
             if has_data:
                 available_weight += weight

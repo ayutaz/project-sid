@@ -30,6 +30,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from piano.core.types import LLMRequest, LLMResponse  # noqa: TC001
+from piano.llm.provider import RateLimitExceededError
 
 if TYPE_CHECKING:
     from piano.llm.provider import LLMProvider
@@ -222,6 +223,8 @@ class LLMGateway:
                 "system_prompt": request.system_prompt,
                 "model": request.model,
                 "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "json_mode": request.json_mode,
             },
             sort_keys=True,
         )
@@ -249,7 +252,7 @@ class LLMGateway:
 
         # Check global limit
         if len(self._global_timestamps) >= self._requests_per_minute:
-            raise Exception(
+            raise RateLimitExceededError(
                 f"Global rate limit exceeded: {len(self._global_timestamps)} requests in last "
                 f"minute (limit: {self._requests_per_minute})"
             )
@@ -257,7 +260,7 @@ class LLMGateway:
         # Check per-agent limit (20% of global limit per agent)
         agent_limit = max(1, int(self._requests_per_minute * 0.2))
         if len(agent_ts) >= agent_limit:
-            raise Exception(
+            raise RateLimitExceededError(
                 f"Per-agent rate limit exceeded for {agent_id}: {len(agent_ts)} requests in "
                 f"last minute (limit: {agent_limit})"
             )
@@ -338,7 +341,8 @@ class LLMGateway:
         """Background task that processes queued requests.
 
         Runs continuously while the gateway is active, respecting
-        concurrency limits and circuit breaker state.
+        concurrency limits and circuit breaker state. Each request is
+        dispatched to its own task for concurrent processing.
         """
         logger.info("gateway_processor_started")
 
@@ -361,14 +365,34 @@ class LLMGateway:
                     self._failed_requests += 1
                     continue
 
-                # Process with concurrency limit
-                async with self._semaphore:
-                    await self._process_request(queued)
+                # Dispatch to its own task for concurrent processing
+                task = asyncio.create_task(self._handle_item(queued))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
             except Exception as exc:
                 logger.exception("gateway_processor_error", error=str(exc))
 
         logger.info("gateway_processor_stopped")
+
+    async def _handle_item(self, queued: QueuedRequest) -> None:
+        """Handle a single queued request with concurrency limiting.
+
+        Acquires the semaphore before processing, and ensures the future
+        is resolved even on unexpected errors.
+
+        Args:
+            queued: The queued request to handle.
+        """
+        async with self._semaphore:
+            try:
+                await self._process_request(queued)
+            except Exception as exc:
+                # Ensure future is resolved even on unexpected errors
+                future = self._futures.pop(queued.future_id, None)
+                if future and not future.done():
+                    future.set_exception(exc)
+                logger.exception("handle_item_error", error=str(exc))
 
     async def _process_request(self, queued: QueuedRequest) -> None:
         """Process a single queued request.

@@ -22,6 +22,8 @@ __all__ = [
     "WorkerStats",
 ]
 
+import asyncio
+import contextlib
 import math
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -194,6 +196,8 @@ class AgentSupervisor:
         self._worker_info: dict[str, WorkerInfo] = {}
         self._agent_to_worker: dict[str, str] = {}
         self._next_worker_index: int = 0
+        self._agent_locks: dict[str, asyncio.Lock] = {}
+        self._health_check_task: asyncio.Task[None] | None = None
 
         logger.info(
             "supervisor_initialized",
@@ -244,14 +248,12 @@ class AgentSupervisor:
 
         if len(self._workers) >= self._config.max_workers:
             raise ValueError(
-                f"Cannot create worker: max_workers limit "
-                f"({self._config.max_workers}) reached"
+                f"Cannot create worker: max_workers limit ({self._config.max_workers}) reached"
             )
 
         if self._worker_factory is None:
             raise RuntimeError(
-                "No worker_factory configured. Provide one in __init__ "
-                "or override create_worker()."
+                "No worker_factory configured. Provide one in __init__ or override create_worker()."
             )
 
         handle = self._worker_factory(worker_id)
@@ -389,9 +391,10 @@ class AgentSupervisor:
     # --- Lifecycle ---
 
     async def start_all(self) -> None:
-        """Start all worker processes.
+        """Start all worker processes in parallel.
 
         Workers that are already running are skipped.
+        Also starts a background health check loop.
         """
         if not self._workers:
             logger.warning("start_all_called_with_no_workers")
@@ -399,13 +402,15 @@ class AgentSupervisor:
 
         logger.info("starting_all_workers", count=len(self._workers))
 
-        for worker_id, handle in self._workers.items():
+        async def _start_one(worker_id: str, handle: WorkerHandle) -> None:
             try:
                 await handle.start()
                 self._worker_info[worker_id].state = WorkerState.RUNNING
             except Exception:
                 logger.exception("worker_start_error", worker_id=worker_id)
                 self._worker_info[worker_id].state = WorkerState.UNHEALTHY
+
+        await asyncio.gather(*[_start_one(wid, h) for wid, h in self._workers.items()])
 
         running_count = sum(
             1 for info in self._worker_info.values() if info.state == WorkerState.RUNNING
@@ -416,20 +421,36 @@ class AgentSupervisor:
             running=running_count,
         )
 
+        # Start background health check loop
+        if self._health_check_task is None or self._health_check_task.done():
+            self._health_check_task = asyncio.create_task(
+                self._health_check_loop(),
+                name="supervisor-health-check",
+            )
+
     async def stop_all(self) -> None:
-        """Stop all worker processes gracefully."""
+        """Stop all worker processes gracefully in parallel."""
+        # Cancel background health check
+        if self._health_check_task is not None and not self._health_check_task.done():
+            self._health_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_check_task
+            self._health_check_task = None
+
         if not self._workers:
             logger.warning("stop_all_called_with_no_workers")
             return
 
         logger.info("stopping_all_workers", count=len(self._workers))
 
-        for worker_id, handle in self._workers.items():
+        async def _stop_one(worker_id: str, handle: WorkerHandle) -> None:
             try:
                 await handle.stop()
                 self._worker_info[worker_id].state = WorkerState.STOPPED
             except Exception:
                 logger.exception("worker_stop_error", worker_id=worker_id)
+
+        await asyncio.gather(*[_stop_one(wid, h) for wid, h in self._workers.items()])
 
         logger.info("all_workers_stopped", count=len(self._workers))
 
@@ -465,8 +486,9 @@ class AgentSupervisor:
         """Rebalance agents across workers for even distribution.
 
         Moves agents from overloaded workers to underloaded ones to achieve
-        a more balanced distribution. The target is an even split across all
-        active workers.
+        a more balanced distribution. Uses per-agent locks to prevent
+        concurrent operations on the same agent. If adding to the destination
+        fails, the agent is re-added to the source worker.
 
         Returns:
             Dictionary mapping worker_id to list of agent_ids that were
@@ -514,22 +536,40 @@ class AgentSupervisor:
                         break
                     dst_worker_id, deficit = under[under_idx]
 
-                # Get shard_id before removing
-                src_worker_id_actual = self._agent_to_worker[agent_id]
-                shard_id = self._worker_info[src_worker_id_actual].shard_ids[agent_id]
+                # Get or create a per-agent lock
+                if agent_id not in self._agent_locks:
+                    self._agent_locks[agent_id] = asyncio.Lock()
 
-                # Remove from source
-                src_handle = self._workers[src_worker_id_actual]
-                await src_handle.remove_agent(agent_id)
-                self._worker_info[src_worker_id_actual].agent_ids.discard(agent_id)
-                self._worker_info[src_worker_id_actual].shard_ids.pop(agent_id, None)
+                async with self._agent_locks[agent_id]:
+                    # Get shard_id before removing
+                    src_worker_id_actual = self._agent_to_worker[agent_id]
+                    shard_id = self._worker_info[src_worker_id_actual].shard_ids[agent_id]
 
-                # Add to destination
-                dst_handle = self._workers[dst_worker_id]
-                await dst_handle.add_agent(agent_id, shard_id)
-                self._worker_info[dst_worker_id].agent_ids.add(agent_id)
-                self._worker_info[dst_worker_id].shard_ids[agent_id] = shard_id
-                self._agent_to_worker[agent_id] = dst_worker_id
+                    # Remove from source
+                    src_handle = self._workers[src_worker_id_actual]
+                    await src_handle.remove_agent(agent_id)
+                    self._worker_info[src_worker_id_actual].agent_ids.discard(agent_id)
+                    self._worker_info[src_worker_id_actual].shard_ids.pop(agent_id, None)
+
+                    # Add to destination; if it fails, re-add to source
+                    dst_handle = self._workers[dst_worker_id]
+                    try:
+                        await dst_handle.add_agent(agent_id, shard_id)
+                    except Exception:
+                        logger.exception(
+                            "rebalance_add_failed",
+                            agent_id=agent_id,
+                            dst_worker=dst_worker_id,
+                        )
+                        # Roll back: re-add to source
+                        await src_handle.add_agent(agent_id, shard_id)
+                        self._worker_info[src_worker_id_actual].agent_ids.add(agent_id)
+                        self._worker_info[src_worker_id_actual].shard_ids[agent_id] = shard_id
+                        continue
+
+                    self._worker_info[dst_worker_id].agent_ids.add(agent_id)
+                    self._worker_info[dst_worker_id].shard_ids[agent_id] = shard_id
+                    self._agent_to_worker[agent_id] = dst_worker_id
 
                 # Track the move
                 if dst_worker_id not in moves:
@@ -563,6 +603,8 @@ class AgentSupervisor:
     async def health_check_all(self) -> dict[str, bool]:
         """Run health checks on all workers.
 
+        Attempts to restart unhealthy workers.
+
         Returns:
             Dictionary mapping worker_id to health status (True = healthy).
         """
@@ -575,9 +617,27 @@ class AgentSupervisor:
                 if not healthy:
                     self._worker_info[worker_id].state = WorkerState.UNHEALTHY
                     logger.warning("worker_unhealthy", worker_id=worker_id)
+                    # Attempt restart
+                    with contextlib.suppress(Exception):
+                        await handle.stop()
+                    try:
+                        await handle.start()
+                        self._worker_info[worker_id].state = WorkerState.RUNNING
+                        logger.info("worker_restarted", worker_id=worker_id)
+                    except Exception:
+                        logger.exception("worker_restart_failed", worker_id=worker_id)
             except Exception:
                 results[worker_id] = False
                 self._worker_info[worker_id].state = WorkerState.UNHEALTHY
                 logger.exception("worker_health_check_error", worker_id=worker_id)
 
         return results
+
+    async def _health_check_loop(self) -> None:
+        """Background loop that periodically runs health checks."""
+        try:
+            while True:
+                await asyncio.sleep(self._config.health_check_interval)
+                await self.health_check_all()
+        except asyncio.CancelledError:
+            return

@@ -558,3 +558,175 @@ class TestEdgeCases:
 
         with pytest.raises(ValueError, match="at capacity"):
             worker.add_agent(_make_agent("agent-005"))
+
+
+# --- Failed Agent Initialization Tests ---
+
+
+class TestFailedAgentInit:
+    """Tests that failed agent initialization is handled correctly."""
+
+    async def test_failed_agents_excluded_from_run_tasks(self):
+        """Agents that fail initialization should be removed from the worker."""
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10)
+
+        good_agent = _make_agent("good-agent", tick_interval=0.02)
+        bad_agent = _make_agent("bad-agent", tick_interval=0.02)
+
+        # Make the bad agent's initialize raise an error
+        async def _fail_init() -> None:
+            raise RuntimeError("Init failed!")
+
+        bad_agent.initialize = _fail_init  # type: ignore[assignment]
+
+        worker.add_agent(good_agent)
+        worker.add_agent(bad_agent)
+        assert worker.agent_count == 2
+
+        await worker.start()
+        try:
+            # Bad agent should have been removed
+            assert worker.agent_count == 1
+            assert "good-agent" in worker.list_agents()
+            assert "bad-agent" not in worker.list_agents()
+
+            # Only good agent should have a task
+            assert "good-agent" in worker._tasks
+            assert "bad-agent" not in worker._tasks
+
+            # Good agent should run normally
+            await asyncio.sleep(0.1)
+            assert good_agent.scheduler.tick_count > 0
+        finally:
+            await worker.stop()
+
+    async def test_all_agents_fail_init(self):
+        """If all agents fail init, worker still starts with no agents."""
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10)
+
+        bad_agent = _make_agent("bad-agent")
+
+        async def _fail_init() -> None:
+            raise RuntimeError("Init failed!")
+
+        bad_agent.initialize = _fail_init  # type: ignore[assignment]
+        worker.add_agent(bad_agent)
+
+        await worker.start()
+        try:
+            assert worker.agent_count == 0
+            assert worker.status == WorkerStatus.RUNNING
+            assert len(worker._tasks) == 0
+        finally:
+            await worker.stop()
+
+
+# --- Stuck Agent Detection Tests ---
+
+
+class TestStuckAgentDetection:
+    """Tests for tick progress check / stuck detection."""
+
+    async def test_stuck_agent_detected_in_health_check(self):
+        """An agent whose tick count hasn't changed is detected as stuck."""
+        import time
+
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10, stuck_threshold_seconds=0.05)
+        agent = _make_agent("agent-001", tick_interval=0.02)
+        worker.add_agent(agent)
+
+        await worker.start()
+        try:
+            # Let the agent run a few ticks
+            await asyncio.sleep(0.1)
+
+            # First health check: record baseline
+            health1 = await worker.health_check()
+            assert health1["healthy"] is True
+            current_tick = agent.scheduler.tick_count
+            assert current_tick > 0
+
+            # Manually set the baseline to the current tick but with old timestamp
+            # to simulate "agent hasn't made progress in a long time"
+            worker._last_tick_progress["agent-001"] = (
+                current_tick,
+                time.monotonic() - 1.0,  # 1 second ago
+            )
+
+            # Cancel the agent task so it can't make more progress
+            task = worker._tasks["agent-001"]
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            # Create a hanging task that never completes (simulating stuck agent)
+            async def _hang_forever() -> None:
+                await asyncio.sleep(3600)
+
+            worker._tasks["agent-001"] = asyncio.create_task(_hang_forever())
+
+            # Health check should detect agent as stuck
+            health2 = await worker.health_check()
+            assert health2["healthy"] is False
+            agent_info = health2["agents"]["agent-001"]
+            assert agent_info["error"] is not None
+            assert "stuck" in agent_info["error"].lower()
+        finally:
+            await worker.stop()
+
+    async def test_progressing_agent_not_stuck(self):
+        """An agent making tick progress should not be marked stuck."""
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10, stuck_threshold_seconds=10.0)
+        agent = _make_agent("agent-001", tick_interval=0.02)
+        worker.add_agent(agent)
+
+        await worker.start()
+        try:
+            # First health check
+            await worker.health_check()
+            await asyncio.sleep(0.1)
+
+            # Second health check: ticks should have advanced
+            health = await worker.health_check()
+            assert health["healthy"] is True
+            assert health["agents"]["agent-001"]["error"] is None
+        finally:
+            await worker.stop()
+
+
+# --- Stop Re-entrancy Tests ---
+
+
+class TestStopReentrancy:
+    """Tests for stop re-entrancy guard."""
+
+    async def test_stop_resets_start_time(self):
+        """Stop should reset _start_time to None."""
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10)
+        worker.add_agent(_make_agent("agent-001"))
+
+        await worker.start()
+        assert worker._start_time is not None
+        await worker.stop()
+        assert worker._start_time is None
+
+    async def test_concurrent_stop_calls(self):
+        """Two concurrent stop() calls should not cause errors."""
+        worker = AgentWorkerProcess(worker_id="w-001", max_agents=10)
+        worker.add_agent(_make_agent("agent-001"))
+
+        await worker.start()
+
+        # First stop should succeed, second should raise due to state check
+        results = await asyncio.gather(
+            worker.stop(),
+            worker.stop(),
+            return_exceptions=True,
+        )
+
+        # One should succeed, one should raise RuntimeError
+        errors = [r for r in results if isinstance(r, RuntimeError)]
+        successes = [r for r in results if r is None]
+        assert len(successes) == 1
+        assert len(errors) == 1
+        assert worker.status == WorkerStatus.STOPPED

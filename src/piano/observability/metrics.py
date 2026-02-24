@@ -55,11 +55,19 @@ def _labels_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(labels.items()))
 
 
+def _escape_label_value(value: str) -> str:
+    """Escape a label value for Prometheus text format.
+
+    Backslashes, double quotes, and newlines must be escaped.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 def _format_labels(labels: dict[str, str]) -> str:
     """Format labels as a Prometheus label string ``{k1="v1",k2="v2"}``."""
     if not labels:
         return ""
-    parts = ",".join(f'{k}="{v}"' for k, v in sorted(labels.items()))
+    parts = ",".join(f'{k}="{_escape_label_value(v)}"' for k, v in sorted(labels.items()))
     return "{" + parts + "}"
 
 
@@ -82,6 +90,16 @@ class Counter:
         self._lock = threading.Lock()
         self._values: dict[tuple[tuple[str, str], ...], float] = defaultdict(float)
 
+    def _validate_labels(self, labels: dict[str, str] | None) -> None:
+        """Raise ``ValueError`` if *labels* keys don't match ``label_names``."""
+        if not self.label_names:
+            return
+        provided = set((labels or {}).keys())
+        expected = set(self.label_names)
+        if provided != expected:
+            msg = f"Label mismatch: expected {sorted(expected)}, got {sorted(provided)}"
+            raise ValueError(msg)
+
     def inc(self, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         """Increment the counter.
 
@@ -90,11 +108,12 @@ class Counter:
             labels: Optional label dict.
 
         Raises:
-            ValueError: If *value* is negative.
+            ValueError: If *value* is negative or labels don't match.
         """
         if value < 0:
             msg = "Counter increment must be non-negative"
             raise ValueError(msg)
+        self._validate_labels(labels)
         key = _labels_key(labels or {})
         with self._lock:
             self._values[key] += value
@@ -137,20 +156,33 @@ class Gauge:
         self._lock = threading.Lock()
         self._values: dict[tuple[tuple[str, str], ...], float] = defaultdict(float)
 
+    def _validate_labels(self, labels: dict[str, str] | None) -> None:
+        """Raise ``ValueError`` if *labels* keys don't match ``label_names``."""
+        if not self.label_names:
+            return
+        provided = set((labels or {}).keys())
+        expected = set(self.label_names)
+        if provided != expected:
+            msg = f"Label mismatch: expected {sorted(expected)}, got {sorted(provided)}"
+            raise ValueError(msg)
+
     def set(self, value: float, labels: dict[str, str] | None = None) -> None:
         """Set the gauge to an arbitrary value."""
+        self._validate_labels(labels)
         key = _labels_key(labels or {})
         with self._lock:
             self._values[key] = value
 
     def inc(self, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         """Increment the gauge."""
+        self._validate_labels(labels)
         key = _labels_key(labels or {})
         with self._lock:
             self._values[key] += value
 
     def dec(self, value: float = 1.0, labels: dict[str, str] | None = None) -> None:
         """Decrement the gauge."""
+        self._validate_labels(labels)
         key = _labels_key(labels or {})
         with self._lock:
             self._values[key] -= value
@@ -181,12 +213,19 @@ class Gauge:
 
 
 class _HistogramData:
-    """Internal per-label-set accumulator for a histogram."""
+    """Internal per-label-set accumulator for a histogram.
+
+    ``bucket_counts`` stores **non-cumulative** (per-bucket) counts.
+    The cumulative view is computed on the fly by ``get_buckets()``
+    and ``export_lines()`` which walk the array and accumulate.
+    """
 
     __slots__ = ("bucket_bounds", "bucket_counts", "count", "total")
 
     def __init__(self, bucket_bounds: tuple[float, ...]) -> None:
         self.bucket_bounds = bucket_bounds
+        # Non-cumulative: each slot counts observations that fell into
+        # exactly this bucket (value <= bound and value > previous bound).
         self.bucket_counts: list[int] = [0] * len(bucket_bounds)
         self.count: int = 0
         self.total: float = 0.0
@@ -231,8 +270,19 @@ class Histogram:
             self._data[key] = _HistogramData(self._buckets)
         return self._data[key]
 
+    def _validate_labels(self, labels: dict[str, str] | None) -> None:
+        """Raise ``ValueError`` if *labels* keys don't match ``label_names``."""
+        if not self.label_names:
+            return
+        provided = set((labels or {}).keys())
+        expected = set(self.label_names)
+        if provided != expected:
+            msg = f"Label mismatch: expected {sorted(expected)}, got {sorted(provided)}"
+            raise ValueError(msg)
+
     def observe(self, value: float, labels: dict[str, str] | None = None) -> None:
         """Record an observation."""
+        self._validate_labels(labels)
         key = _labels_key(labels or {})
         with self._lock:
             self._get_data(key).observe(value)
@@ -286,9 +336,9 @@ class Histogram:
 
                 # Bucket lines (cumulative)
                 cumulative = 0
+                le_label = dict(key)
                 for i, bound in enumerate(data.bucket_bounds):
                     cumulative += data.bucket_counts[i]
-                    le_label = dict(key)
                     le_label["le"] = _format_bucket_bound(bound)
                     le_str = _format_labels(le_label)
                     lines.append(f"{self.name}_bucket{le_str} {cumulative}")
@@ -314,7 +364,7 @@ def _format_value(value: float) -> str:
         return "+Inf" if value > 0 else "-Inf"
     if math.isnan(value):
         return "NaN"
-    if value == int(value) and not math.isinf(value):
+    if value == int(value):
         return str(int(value))
     return repr(value)
 
@@ -440,6 +490,15 @@ class MetricsRegistry:
         with self._lock:
             return self._metrics.get(name)
 
+    def __len__(self) -> int:
+        """Return the number of registered metrics."""
+        with self._lock:
+            return len(self._metrics)
+
+    def __bool__(self) -> bool:
+        """A registry is always truthy, even when empty."""
+        return True
+
 
 # ---------------------------------------------------------------------------
 # PianoMetrics -- pre-defined PIANO metrics
@@ -524,5 +583,5 @@ class PianoMetrics:
 
         logger.info(
             "piano_metrics_initialized",
-            metric_count=len(self.registry._metrics),
+            metric_count=len(self.registry),
         )

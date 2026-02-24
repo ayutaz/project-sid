@@ -1,8 +1,11 @@
 """Memory Manager - unified facade over WM and STM.
 
 The MemoryManager implements the ``Module`` ABC (tier=MID) and orchestrates
-both Working Memory and Short-Term Memory. On each tick it reads new
-perceptions / actions from SAS and routes them to the appropriate store.
+Working Memory (WM) and Short-Term Memory (STM) only. Long-Term Memory is
+managed separately by ``MemoryConsolidationModule`` and ``LTMRetrievalModule``.
+
+On each tick it reads new perceptions / actions from SAS and routes them to
+the appropriate store.
 
 Reference: docs/implementation/04-memory-system.md Section 4.8
 """
@@ -124,7 +127,7 @@ def _percepts_summary(percepts: object) -> str:
         parts: list[str] = []
         pos = getattr(p, "position", {})
         if pos:
-            parts.append(f"pos=({pos.get('x',0)},{pos.get('y',0)},{pos.get('z',0)})")
+            parts.append(f"pos=({pos.get('x', 0)},{pos.get('y', 0)},{pos.get('z', 0)})")
         players = getattr(p, "nearby_players", [])
         if players:
             parts.append(f"nearby={players}")

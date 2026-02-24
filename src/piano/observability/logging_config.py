@@ -35,7 +35,13 @@ from pydantic import BaseModel, Field
 
 
 class LogFormat(StrEnum):
-    """Supported log output formats."""
+    """Supported log output formats.
+
+    ``LOKI`` currently uses the same JSON renderer as ``JSON``.
+    It exists as a distinct variant so that future Loki-specific
+    formatting (e.g. label extraction) can be added without
+    changing the ``JSON`` code path.
+    """
 
     JSON = "json"
     CONSOLE = "console"
@@ -52,6 +58,10 @@ class LogFilter:
 
     Multiple filters can be combined -- an event must satisfy **all**
     active filter criteria to pass through.
+
+    Thread safety: the filter's internal sets and level threshold are
+    written only by the ``by_*`` methods.  For safe operation, configure
+    all filters **at startup** before any concurrent logging begins.
     """
 
     # Map level names to numeric values for comparison
@@ -377,7 +387,12 @@ def configure_piano_logging(config: LoggingConfig | None = None) -> LoggingConfi
     root_level = getattr(logging, config.level.upper(), logging.INFO)
 
     # Configure stdlib logging as a fallback / integration layer
-    handler = logging.StreamHandler(sys.stdout if config.output == "stdout" else sys.stderr)
+    if config.output in ("stdout", "stderr"):
+        handler: logging.Handler = logging.StreamHandler(
+            sys.stdout if config.output == "stdout" else sys.stderr
+        )
+    else:
+        handler = logging.FileHandler(config.output)
     handler.setLevel(root_level)
     logging.basicConfig(
         format="%(message)s",
@@ -397,7 +412,7 @@ def configure_piano_logging(config: LoggingConfig | None = None) -> LoggingConfi
         wrapper_class=structlog.make_filtering_bound_logger(root_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=False,
+        cache_logger_on_first_use=True,
     )
 
     return config

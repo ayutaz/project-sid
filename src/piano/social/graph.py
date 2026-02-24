@@ -56,7 +56,9 @@ class SocialGraph:
     def __init__(self) -> None:
         """Initialize an empty social graph."""
         self._graph = nx.DiGraph()
-        logger.info("social_graph_initialized")
+        self._pagerank_cache: dict[str, float] | None = None
+        self._pagerank_dirty: bool = True
+        logger.debug("social_graph_initialized")
 
     def add_agent(self, agent_id: str) -> None:
         """Add an agent node to the graph.
@@ -66,6 +68,7 @@ class SocialGraph:
         """
         if agent_id not in self._graph:
             self._graph.add_node(agent_id)
+            self._pagerank_dirty = True
             logger.debug("agent_added", agent_id=agent_id)
 
     def remove_agent(self, agent_id: str) -> None:
@@ -76,6 +79,7 @@ class SocialGraph:
         """
         if agent_id in self._graph:
             self._graph.remove_node(agent_id)
+            self._pagerank_dirty = True
             logger.debug("agent_removed", agent_id=agent_id)
 
     def update_relationship(
@@ -125,6 +129,7 @@ class SocialGraph:
         )
 
         self._graph.add_edge(source, target, relation=relation)
+        self._pagerank_dirty = True
         logger.debug(
             "relationship_updated",
             source=source,
@@ -144,6 +149,7 @@ class SocialGraph:
         self.add_agent(relation.source_id)
         self.add_agent(relation.target_id)
         self._graph.add_edge(relation.source_id, relation.target_id, relation=relation)
+        self._pagerank_dirty = True
         logger.debug(
             "relationship_set",
             source=relation.source_id,
@@ -247,6 +253,10 @@ class SocialGraph:
             # No edges - all agents have equal influence
             return 1.0 / self._graph.number_of_nodes() if self._graph.number_of_nodes() > 0 else 0.0
 
+        # Return cached result if available and graph hasn't changed
+        if not self._pagerank_dirty and self._pagerank_cache is not None:
+            return self._pagerank_cache.get(agent_id, 0.0)
+
         # Use affinity as edge weights (convert to 0-1 range)
         # affinity: -1 to 1 -> weight: 0 to 1
         weighted_graph = nx.DiGraph()
@@ -257,13 +267,20 @@ class SocialGraph:
 
         try:
             pagerank = nx.pagerank(weighted_graph, weight="weight")
+            self._pagerank_cache = pagerank
+            self._pagerank_dirty = False
             return pagerank.get(agent_id, 0.0)
-        except Exception as exc:
+        except (nx.NetworkXError, nx.PowerIterationFailedConvergence) as exc:
             logger.warning("pagerank_failed", error=str(exc))
             return 0.0
 
     def get_communities(self) -> list[set[str]]:
         """Detect communities using weakly connected components.
+
+        Note: weakly_connected_components treats directed edges as undirected
+        for connectivity. This means A->B and B->A are equivalent for
+        community detection, which may over-merge communities where
+        relationships are one-directional.
 
         Returns:
             List of sets, each containing agent IDs in a community

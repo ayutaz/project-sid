@@ -76,7 +76,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: qdrant
-          image: qdrant/qdrant:latest
+          image: qdrant/qdrant:v1.7.4
           ports:
             - name: http
               containerPort: 6333

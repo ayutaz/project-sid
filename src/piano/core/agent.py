@@ -115,14 +115,15 @@ class Agent:
         try:
             if max_ticks is not None:
                 # Finite run: wait until the scheduler reaches the tick count
+                poll_interval = min(self._scheduler.tick_interval * 0.25, 0.05)
                 while (
                     self._running
                     and self._scheduler.tick_count < max_ticks
                     and self._scheduler.state == SchedulerState.RUNNING
                 ):
-                    await asyncio.sleep(self._scheduler.tick_interval * 0.5)
+                    await asyncio.sleep(poll_interval)
                 # Allow the last tick's module executions to complete
-                await asyncio.sleep(self._scheduler.tick_interval)
+                await asyncio.sleep(self._scheduler.tick_interval * 0.5)
             else:
                 # Infinite run: wait until stopped externally
                 while self._running and self._scheduler.state == SchedulerState.RUNNING:

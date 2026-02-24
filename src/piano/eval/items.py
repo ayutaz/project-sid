@@ -24,7 +24,10 @@ class ItemSnapshot(BaseModel):
 
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     inventory: dict[str, int] = Field(default_factory=dict)
-    unique_count: int = 0
+    unique_count: int = Field(
+        default=0,
+        description="Cumulative count of unique items seen up to this snapshot",
+    )
 
 
 class DependencyNode(BaseModel):
@@ -227,7 +230,7 @@ class ItemCollectionBenchmark:
         """Detect when item collection rate plateaus.
 
         Saturation is detected when a time window contains fewer new items
-        than the threshold.
+        than the threshold. Uses O(N) precomputed cumulative item sets.
 
         Args:
             window_seconds: Time window to check (default: 600s = 10 minutes)
@@ -239,35 +242,44 @@ class ItemCollectionBenchmark:
         if len(self._snapshots) < 2 or self._start_time is None:
             return None
 
-        # Only check for saturation after we've had at least one full window
         total_duration = (self._snapshots[-1].timestamp - self._start_time).total_seconds()
         if total_duration < window_seconds:
             return None
 
-        # Check each snapshot from start, but only after initial window
+        # Precompute cumulative item sets in O(N)
+        cumulative: list[set[str]] = []
+        running: set[str] = set()
+        for snapshot in self._snapshots:
+            running = running | set(snapshot.inventory.keys())
+            cumulative.append(running.copy())
+
+        # Use a sliding window start pointer
+        window_start_idx = 0
+
         for i in range(len(self._snapshots)):
             current_snapshot = self._snapshots[i]
             elapsed_at_snapshot = (current_snapshot.timestamp - self._start_time).total_seconds()
 
-            # Skip snapshots before we have a full window
             if elapsed_at_snapshot < window_seconds:
                 continue
 
             window_start_time = current_snapshot.timestamp.timestamp() - window_seconds
 
-            # Count unique items before and during window
-            items_before_window: set[str] = set()
-            items_in_window: set[str] = set()
+            # Advance window_start_idx to the first snapshot within the window
+            while window_start_idx < i:
+                if self._snapshots[window_start_idx].timestamp.timestamp() >= window_start_time:
+                    break
+                window_start_idx += 1
 
-            for snapshot in self._snapshots:
-                snapshot_time = snapshot.timestamp.timestamp()
-                if snapshot_time < window_start_time:
-                    items_before_window.update(snapshot.inventory.keys())
-                elif snapshot_time <= current_snapshot.timestamp.timestamp():
-                    items_in_window.update(snapshot.inventory.keys())
+            # Items seen before window = cumulative set just before window_start_idx
+            if window_start_idx > 0:
+                items_before_window = cumulative[window_start_idx - 1]
+            else:
+                items_before_window = set()
 
-            # New items = items in window that weren't seen before
-            new_items = items_in_window - items_before_window
+            # Items in window = cumulative at i minus items before window
+            items_at_i = cumulative[i]
+            new_items = items_at_i - items_before_window
 
             if len(new_items) <= new_item_threshold:
                 return elapsed_at_snapshot

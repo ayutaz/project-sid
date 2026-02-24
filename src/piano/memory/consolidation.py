@@ -15,6 +15,7 @@ __all__ = [
     "MemoryConsolidationModule",
 ]
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -242,7 +243,7 @@ class MemoryConsolidationModule(Module):
         try:
             # Build prompt with all entry contents
             memories_text = "\n".join(
-                f"- [{i+1}] {e.content} (importance: {e.importance:.2f})"
+                f"- [{i + 1}] {e.content} (importance: {e.importance:.2f})"
                 for i, e in enumerate(entries)
             )
 
@@ -258,8 +259,7 @@ Summary:"""
             request = LLMRequest(
                 prompt=prompt,
                 system_prompt=(
-                    "You are a memory consolidation system. "
-                    "Create concise, meaningful summaries."
+                    "You are a memory consolidation system. Create concise, meaningful summaries."
                 ),
                 tier=ModuleTier.SLOW,
                 temperature=0.3,
@@ -292,9 +292,9 @@ Summary:"""
             importance=entry.importance,
             source_module=entry.source_module,
             metadata={
-                k: v
+                k: (json.dumps(v) if isinstance(v, list) else v)
                 for k, v in entry.metadata.items()
-                if isinstance(v, (str, int, float, bool))
+                if isinstance(v, (str, int, float, bool, list))
             },
             embedding=self._generate_embedding_placeholder(entry.content),
         )
@@ -312,6 +312,6 @@ Summary:"""
         Returns:
             A placeholder embedding vector (zero vector).
         """
-        # Simple placeholder: return zero vector of dimension 1536 (text-embedding-3-small)
+        # Simple placeholder: return zero vector of dimension 384 (MiniLM default)
         # In production, this would call OpenAI's embedding API
-        return [0.0] * 1536
+        return [0.0] * 384

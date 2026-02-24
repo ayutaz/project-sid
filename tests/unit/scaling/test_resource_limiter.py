@@ -78,9 +78,15 @@ class TestBackpressurePolicy:
 
     def test_should_warn_llm(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
-        # 80% of 10 = 8 -> usage 8 should warn
-        usage = ResourceUsage(agent_id="a", concurrent_llm=8)
+        # 80% of 10 = 8 -> usage 9 (> 8) should warn
+        usage = ResourceUsage(agent_id="a", concurrent_llm=9)
         assert policy.should_warn(usage, max_concurrent_llm=10, max_memory_mb=64) is True
+
+    def test_should_not_warn_at_threshold(self) -> None:
+        policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
+        # Exactly at 80% boundary (8 == 10 * 0.8) should NOT warn with > comparison
+        usage = ResourceUsage(agent_id="a", concurrent_llm=8)
+        assert policy.should_warn(usage, max_concurrent_llm=10, max_memory_mb=64) is False
 
     def test_should_not_warn_below_threshold(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
@@ -89,9 +95,15 @@ class TestBackpressurePolicy:
 
     def test_should_throttle_llm(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
-        # 90% of 10 = 9 -> usage 9 should throttle
-        usage = ResourceUsage(agent_id="a", concurrent_llm=9)
+        # 90% of 10 = 9 -> usage 10 (> 9) should throttle
+        usage = ResourceUsage(agent_id="a", concurrent_llm=10)
         assert policy.should_throttle(usage, max_concurrent_llm=10, max_memory_mb=64) is True
+
+    def test_should_not_throttle_at_threshold(self) -> None:
+        policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
+        # Exactly at 90% boundary (9 == 10 * 0.9) should NOT throttle with > comparison
+        usage = ResourceUsage(agent_id="a", concurrent_llm=9)
+        assert policy.should_throttle(usage, max_concurrent_llm=10, max_memory_mb=64) is False
 
     def test_should_not_throttle_below_threshold(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
@@ -100,13 +112,13 @@ class TestBackpressurePolicy:
 
     def test_should_throttle_memory(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
-        # 90% of 64 = 57.6 -> memory 58 should throttle
+        # 90% of 64 = 57.6 -> memory 58 (> 57.6) should throttle
         usage = ResourceUsage(agent_id="a", memory_mb=58.0)
         assert policy.should_throttle(usage, max_concurrent_llm=3, max_memory_mb=64) is True
 
     def test_should_warn_memory(self) -> None:
         policy = BackpressurePolicy(warning_threshold=0.8, throttle_threshold=0.9)
-        # 80% of 64 = 51.2 -> memory 52 should warn
+        # 80% of 64 = 51.2 -> memory 52 (> 51.2) should warn
         usage = ResourceUsage(agent_id="a", memory_mb=52.0)
         assert policy.should_warn(usage, max_concurrent_llm=3, max_memory_mb=64) is True
 
@@ -283,11 +295,11 @@ class TestResourceLimiter:
         )
         agent = "agent-001"
 
-        # Acquire 6 out of 10 -> 60% -> should hit throttle
-        for _ in range(6):
+        # Acquire 7 out of 10 -> 70% > 60% threshold -> should hit throttle
+        for _ in range(7):
             await limiter.acquire(agent, ResourceType.LLM)
 
-        # Next acquire should be throttled
+        # Next acquire should be throttled (7/10 = 70% > 60%)
         assert await limiter.acquire(agent, ResourceType.LLM) is False
         assert limiter.is_throttled(agent) is True
 
@@ -334,11 +346,11 @@ class TestResourceLimiter:
         limiter = ResourceLimiter(max_concurrent_llm_per_agent=3)
         agent = "agent-001"
 
-        # Fill up -- acquire 2 (which at default 0.9 threshold, 2/3 = 66% < 90%, ok)
+        # Fill up -- acquire 3
         await limiter.acquire(agent, ResourceType.LLM)
         await limiter.acquire(agent, ResourceType.LLM)
         await limiter.acquire(agent, ResourceType.LLM)
-        # 3/3 = 100% >= 90% -- now throttled on next attempt
+        # 3/3 = 100% > 90% -- now throttled on next attempt
         assert await limiter.acquire(agent, ResourceType.LLM) is False
         assert limiter.is_throttled(agent) is True
 
@@ -350,3 +362,57 @@ class TestResourceLimiter:
         assert limiter.is_throttled(agent) is False
         # Can acquire again
         assert await limiter.acquire(agent, ResourceType.LLM) is True
+
+    async def test_deregister_agent(self) -> None:
+        """deregister_agent removes all tracking state for the agent."""
+        limiter = ResourceLimiter(
+            max_concurrent_llm_per_agent=5,
+            max_concurrent_llm_per_worker=10,
+        )
+        agent = "agent-001"
+
+        # Acquire some slots
+        await limiter.acquire(agent, ResourceType.LLM)
+        await limiter.acquire(agent, ResourceType.LLM)
+        assert limiter.worker_llm_in_use == 2
+
+        # Deregister
+        await limiter.deregister_agent(agent)
+
+        # Agent state should be gone
+        usage = limiter.get_usage(agent)
+        assert usage.concurrent_llm == 0
+        assert limiter.is_throttled(agent) is False
+
+        # Worker slots should be freed
+        assert limiter.worker_llm_in_use == 0
+
+    async def test_deregister_unknown_agent(self) -> None:
+        """deregister_agent on unknown agent is a no-op."""
+        limiter = ResourceLimiter()
+        # Should not raise
+        await limiter.deregister_agent("nonexistent")
+
+    async def test_atomic_acquire_under_contention(self) -> None:
+        """Multiple coroutines acquiring concurrently should not exceed limits."""
+        limiter = ResourceLimiter(
+            max_concurrent_llm_per_agent=5,
+            max_concurrent_llm_per_worker=5,
+        )
+        agent = "agent-001"
+        acquired_count = 0
+
+        async def try_acquire() -> None:
+            nonlocal acquired_count
+            ok = await limiter.acquire(agent, ResourceType.LLM)
+            if ok:
+                acquired_count += 1
+
+        # Run many concurrent acquires
+        await asyncio.gather(*[try_acquire() for _ in range(20)])
+
+        # Should never exceed the limit
+        assert acquired_count <= 5
+        assert limiter.worker_llm_in_use <= 5
+        usage = limiter.get_usage(agent)
+        assert usage.concurrent_llm <= 5

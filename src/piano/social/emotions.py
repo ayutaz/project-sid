@@ -105,7 +105,7 @@ EMOTION_MAP: dict[tuple[str, str], str] = {
     ("neutral", "low"): "bored",
     ("negative", "high"): "angry",
     ("negative", "medium"): "sad",
-    ("negative", "low"): "afraid",
+    ("negative", "low"): "depressed",
 }
 
 
@@ -158,14 +158,15 @@ class EmotionTracker:
             emotions=dict(self._emotions),
         )
 
-    def apply_event(self, event: EmotionEvent) -> None:
+    def apply_event(self, event: EmotionEvent, *, timestamp: float | None = None) -> None:
         """Apply an emotional event, shifting valence and arousal.
 
         Args:
             event: The emotion event to apply
+            timestamp: Optional explicit timestamp (defaults to time.time())
         """
         # Apply decay before the new event
-        now = time.time()
+        now = timestamp if timestamp is not None else time.time()
         delta = now - self._last_update
         self.decay(delta)
 
@@ -186,15 +187,18 @@ class EmotionTracker:
         self,
         other_state: EmotionState,
         influence: float = 0.1,
+        *,
+        timestamp: float | None = None,
     ) -> None:
         """Apply social contagion from another agent's emotional state.
 
         Args:
             other_state: Emotional state of the other agent
             influence: Strength of influence (0.0-1.0)
+            timestamp: Optional explicit timestamp (defaults to time.time())
         """
         # Apply decay first
-        now = time.time()
+        now = timestamp if timestamp is not None else time.time()
         delta = now - self._last_update
         self.decay(delta)
 
@@ -265,9 +269,11 @@ class EmotionTracker:
             "content": (0.5, 0.2),
             "calm": (0.0, 0.15),
             "bored": (0.0, 0.1),
+            "surprised": (0.0, 0.85),
             "sad": (-0.6, 0.4),
             "angry": (-0.7, 0.8),
             "afraid": (-0.5, 0.7),
+            "depressed": (-0.5, 0.15),
         }
 
         self._emotions.clear()

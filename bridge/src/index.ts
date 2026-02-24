@@ -3,22 +3,27 @@
  *
  * Runs a Mineflayer bot that exposes a ZMQ REP socket for commands
  * and a ZMQ PUB socket for event streaming.
+ *
+ * Port allocation scheme (must match Python BridgeManager):
+ *   Bot i CMD port = BASE_CMD_PORT + i * 2
+ *   Bot i EVT port = BASE_EVT_PORT + i * 2
+ *   where BASE_EVT_PORT = BASE_CMD_PORT + 1
  */
 
 import mineflayer, { Bot } from "mineflayer";
-import { Vec3 } from "vec3";
 import { pathfinder, Movements, goals } from "mineflayer-pathfinder";
 import * as zmq from "zeromq";
 import { v4 as uuidv4 } from "uuid";
 
+import { CommandHandler, BridgeEvent, McData } from "./types";
 import { getBasicHandlers } from "./handlers/basic";
 import { getSocialHandlers } from "./handlers/social";
 import { getCombatHandlers } from "./handlers/combat";
 import { getAdvancedHandlers } from "./handlers/advanced";
-import { collectPerception } from "./handlers/perception";
+import { collectPerception, publishActionComplete } from "./handlers/perception";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types (command/response - internal to index.ts)
 // ---------------------------------------------------------------------------
 
 interface BridgeCommand {
@@ -35,17 +40,6 @@ interface BridgeResponse {
   error: string | null;
 }
 
-interface BridgeEvent {
-  event_type: string;
-  data: Record<string, any>;
-  timestamp: string;
-}
-
-type CommandHandler = (
-  bot: Bot,
-  params: Record<string, any>
-) => Promise<Record<string, any>>;
-
 export interface BotBridgeConfig {
   mcHost: string;
   mcPort: number;
@@ -59,11 +53,18 @@ export interface BotBridgeConfig {
   zmqCurveServerSecretKey?: string;
 }
 
+export interface BotBridgeResult {
+  bot: Bot;
+  repSocket: zmq.Reply;
+  pubSocket: zmq.Publisher;
+  cleanup: () => void;
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
 
-function buildHandlers(): Record<string, CommandHandler> {
+function buildHandlers(mcData: McData): Record<string, CommandHandler> {
   return {
     // Built-in handlers
     ping: async () => ({ pong: true }),
@@ -92,7 +93,7 @@ function buildHandlers(): Record<string, CommandHandler> {
     mine: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
       const block = bot.blockAt(
-        new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
+        new (require("vec3").Vec3)(Math.floor(x), Math.floor(y), Math.floor(z))
       );
       if (!block) {
         throw new Error(`No block at ${x},${y},${z}`);
@@ -103,7 +104,6 @@ function buildHandlers(): Record<string, CommandHandler> {
 
     craft: async (bot, params) => {
       const { item, count } = params as { item: string; count: number };
-      const mcData = require("minecraft-data")(bot.version);
       const itemDef = mcData.itemsByName[item];
       if (!itemDef) {
         throw new Error(`Unknown item: ${item}`);
@@ -142,11 +142,11 @@ function buildHandlers(): Record<string, CommandHandler> {
       return { items };
     },
 
-    // Imported handler modules
-    ...getBasicHandlers(),
-    ...getSocialHandlers(),
-    ...getCombatHandlers(),
-    ...getAdvancedHandlers(),
+    // Imported handler modules (pass cached mcData)
+    ...getBasicHandlers(mcData),
+    ...getSocialHandlers(mcData),
+    ...getCombatHandlers(mcData),
+    ...getAdvancedHandlers(mcData),
   };
 }
 
@@ -156,7 +156,7 @@ function buildHandlers(): Record<string, CommandHandler> {
 
 export async function createBotBridge(
   config: BotBridgeConfig
-): Promise<{ bot: Bot; repSocket: zmq.Reply; pubSocket: zmq.Publisher }> {
+): Promise<BotBridgeResult> {
   const zmqCmdAddr = `tcp://0.0.0.0:${config.zmqCmdPort}`;
   const zmqEvtAddr = `tcp://0.0.0.0:${config.zmqEvtPort}`;
 
@@ -198,7 +198,10 @@ export async function createBotBridge(
   console.log(`[bridge] ZMQ REP bound on ${zmqCmdAddr}`);
   console.log(`[bridge] ZMQ PUB bound on ${zmqEvtAddr}`);
 
-  const handlers = buildHandlers();
+  // Cache minecraft-data once per bot
+  const mcData: McData = require("minecraft-data")(config.mcVersion);
+
+  const handlers = buildHandlers(mcData);
 
   // -- Command loop --------------------------------------------------------
   (async () => {
@@ -231,32 +234,34 @@ export async function createBotBridge(
         continue;
       }
 
+      let success = false;
+      let data: Record<string, any> = {};
+      let error: string | null = null;
+
       try {
         const timeoutMs = cmd.timeout_ms ?? 30000;
-        const data = await Promise.race([
+        data = await Promise.race([
           handler(bot, cmd.params),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Command '${cmd.action}' timed out after ${timeoutMs}ms`)), timeoutMs)
           ),
         ]);
-        await repSocket.send(
-          JSON.stringify({
-            id: cmd.id,
-            success: true,
-            data,
-            error: null,
-          } satisfies BridgeResponse)
-        );
+        success = true;
       } catch (err: any) {
-        await repSocket.send(
-          JSON.stringify({
-            id: cmd.id,
-            success: false,
-            data: {},
-            error: err.message ?? String(err),
-          } satisfies BridgeResponse)
-        );
+        error = err.message ?? String(err);
       }
+
+      await repSocket.send(
+        JSON.stringify({
+          id: cmd.id,
+          success,
+          data,
+          error,
+        } satisfies BridgeResponse)
+      );
+
+      // Publish action_complete event via PUB socket
+      await publishActionComplete(pubSocket, cmd.id, success, data);
     }
   })();
 
@@ -314,12 +319,23 @@ export async function createBotBridge(
     console.error(`[bridge] Bot ${config.username} error: ${err.message}`);
   });
 
+  // -- ZMQ socket cleanup on shutdown --------------------------------------
+  const cleanup = () => {
+    if (perceptionInterval) {
+      clearInterval(perceptionInterval);
+      perceptionInterval = null;
+    }
+    try { repSocket.close(); } catch { /* already closed */ }
+    try { pubSocket.close(); } catch { /* already closed */ }
+    console.log(`[bridge] ZMQ sockets closed for ${config.username}`);
+  };
+
   bot.on("end", (reason) => {
-    if (perceptionInterval) clearInterval(perceptionInterval);
+    cleanup();
     console.log(`[bridge] Bot ${config.username} disconnected: ${reason}`);
   });
 
-  return { bot, repSocket, pubSocket };
+  return { bot, repSocket, pubSocket, cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +359,12 @@ async function main(): Promise<void> {
     zmqCurveServerSecretKey: process.env.ZMQ_CURVE_SERVER_SECRET_KEY ?? "",
   };
 
-  const { bot } = await createBotBridge(config);
+  const { bot, cleanup } = await createBotBridge(config);
+
+  process.on("SIGINT", () => {
+    cleanup();
+    process.exit(0);
+  });
 
   // In single-bot mode, exit on disconnect (backward compatible behavior)
   bot.on("end", () => {

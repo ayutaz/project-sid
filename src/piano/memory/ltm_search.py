@@ -191,7 +191,14 @@ class LTMRetrievalModule(Module):
                     )
                     for mem in top_memories
                 ]
-                await sas.set_working_memory(current_wm + ltm_entries)
+                combined = current_wm + ltm_entries
+                # Cap to WM capacity (10) keeping highest importance entries
+                wm_capacity = 10
+                if len(combined) > wm_capacity:
+                    combined = sorted(combined, key=lambda e: e.importance, reverse=True)[
+                        :wm_capacity
+                    ]
+                await sas.set_working_memory(combined)
 
             return ModuleResult(
                 module_name=self.name,

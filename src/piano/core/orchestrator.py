@@ -111,6 +111,7 @@ class AgentOrchestrator:
         self._sas_factory = sas_factory
         self._agents: dict[str, Agent] = {}
         self._sas_instances: dict[str, SharedAgentState] = {}
+        self._run_tasks: list[asyncio.Task] | None = None  # type: ignore[type-arg]
         logger.info(
             "orchestrator_initialized",
             max_agents=config.max_agents,
@@ -242,7 +243,15 @@ class AgentOrchestrator:
 
         # Initialize all agents concurrently
         init_tasks = [agent.initialize() for agent in self._agents.values()]
-        await asyncio.gather(*init_tasks)
+        init_results = await asyncio.gather(*init_tasks, return_exceptions=True)
+        agent_ids = list(self._agents.keys())
+        for agent_id, result in zip(agent_ids, init_results, strict=True):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "agent_init_failed",
+                    agent_id=agent_id,
+                    error=str(result),
+                )
 
         # Start all agents concurrently (run in background)
         run_tasks = [asyncio.create_task(agent.run()) for agent in self._agents.values()]
@@ -268,12 +277,12 @@ class AgentOrchestrator:
         await asyncio.gather(*shutdown_tasks, return_exceptions=True)
 
         # Cancel background run tasks if they exist
-        if hasattr(self, "_run_tasks"):
+        if self._run_tasks is not None:
             for task in self._run_tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*self._run_tasks, return_exceptions=True)
-            del self._run_tasks
+            self._run_tasks = None
 
         logger.info("all_agents_stopped", count=len(self._agents))
 
@@ -312,7 +321,7 @@ class AgentOrchestrator:
         logger.info("broadcasting_to_all_agents", message=message, count=len(self._agents))
 
         # Send message to all SAS instances concurrently
-        timestamp = asyncio.get_event_loop().time()
+        timestamp = asyncio.get_running_loop().time()
         broadcast_tasks = [
             sas.update_section("broadcast", {"message": message, "timestamp": timestamp})
             for sas in self._sas_instances.values()

@@ -45,8 +45,9 @@ def _eviction_score(entry: MemoryEntry, now: datetime) -> float:
 class WorkingMemory:
     """In-memory store for the agent's immediate cognitive context.
 
-    All public mutating methods sync back to SAS when a SAS reference is
-    attached. The memory is purely in-process (no external DB).
+    Synchronisation to SAS is performed explicitly via ``sync_to_sas()``
+    (called by MemoryManager after each tick). The memory is purely
+    in-process (no external DB).
     """
 
     def __init__(self, capacity: int = _MAX_CAPACITY) -> None:

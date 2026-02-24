@@ -1,105 +1,12 @@
+"""Phase 1 smoke tests -- instantiation and integration checks.
+
+Verifies that Phase 1 classes can be instantiated with minimal arguments
+and that key integration points (module registration, etc.) work correctly.
+"""
+
 from __future__ import annotations
 
 import pytest
-
-
-@pytest.mark.integration
-def test_import_goals_generator():
-    """Test that goals generator module can be imported."""
-    try:
-        from piano.goals import generator  # noqa: F401
-    except ImportError:
-        pytest.skip("goals.generator not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_planning_planner():
-    """Test that planning planner module can be imported."""
-    try:
-        from piano.planning import planner  # noqa: F401
-    except ImportError:
-        pytest.skip("planning.planner not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_talking():
-    """Test that talking module can be imported."""
-    try:
-        from piano import talking  # noqa: F401
-    except ImportError:
-        pytest.skip("talking module not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_reflection():
-    """Test that reflection module can be imported."""
-    try:
-        from piano import reflection  # noqa: F401
-    except ImportError:
-        pytest.skip("reflection module not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_social():
-    """Test that social awareness module can be imported."""
-    try:
-        from piano import social  # noqa: F401
-    except ImportError:
-        pytest.skip("social module not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_memory_ltm():
-    """Test that long-term memory module can be imported."""
-    try:
-        from piano.memory import ltm  # noqa: F401
-    except ImportError:
-        pytest.skip("memory.ltm not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_memory_ltm_search():
-    """Test that LTM search module can be imported."""
-    try:
-        from piano.memory import ltm_search  # noqa: F401
-    except ImportError:
-        pytest.skip("memory.ltm_search not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_awareness_nn_model():
-    """Test that action awareness neural network module can be imported."""
-    try:
-        from piano.awareness import nn_model  # noqa: F401
-    except ImportError:
-        pytest.skip("awareness.nn_model not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_llm_tiering():
-    """Test that LLM tiering module can be imported."""
-    try:
-        from piano.llm import tiering  # noqa: F401
-    except ImportError:
-        pytest.skip("llm.tiering not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_core_checkpoint():
-    """Test that checkpoint module can be imported."""
-    try:
-        from piano.core import checkpoint  # noqa: F401
-    except ImportError:
-        pytest.skip("core.checkpoint not yet implemented")
-
-
-@pytest.mark.integration
-def test_import_eval():
-    """Test that evaluation module can be imported."""
-    try:
-        from piano import eval  # noqa: F401
-    except ImportError:
-        pytest.skip("eval module not yet implemented")
 
 
 @pytest.mark.integration

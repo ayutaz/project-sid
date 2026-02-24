@@ -182,3 +182,60 @@ class TestCachedLLMProvider:
         await cached.complete(_req("x"))
         assert cached.cache.size == 1
         assert cached.cache is cache
+
+
+# ---------------------------------------------------------------------------
+# Cache key tests
+# ---------------------------------------------------------------------------
+
+
+class TestCacheKeyFields:
+    def test_different_max_tokens_different_keys(self) -> None:
+        """Different max_tokens should produce different cache keys."""
+        cache = LLMCache()
+        cache.put(_req("hi", max_tokens=100), _resp("short"))
+        cache.put(_req("hi", max_tokens=500), _resp("long"))
+        assert cache.get(_req("hi", max_tokens=100)).content == "short"  # type: ignore[union-attr]
+        assert cache.get(_req("hi", max_tokens=500)).content == "long"  # type: ignore[union-attr]
+
+    def test_different_json_mode_different_keys(self) -> None:
+        """Different json_mode should produce different cache keys."""
+        cache = LLMCache()
+        cache.put(_req("hi", json_mode=False), _resp("text"))
+        cache.put(_req("hi", json_mode=True), _resp("json"))
+        assert cache.get(_req("hi", json_mode=False)).content == "text"  # type: ignore[union-attr]
+        assert cache.get(_req("hi", json_mode=True)).content == "json"  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# CachedLLMProvider proxy properties tests
+# ---------------------------------------------------------------------------
+
+
+class TestCachedLLMProviderProxy:
+    @pytest.mark.asyncio
+    async def test_total_cost_usd_proxied(self) -> None:
+        """total_cost_usd should be proxied from the wrapped provider."""
+        from piano.llm.provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test-key")
+        provider._total_cost_usd = 1.23
+        cached = CachedLLMProvider(provider)
+        assert cached.total_cost_usd == 1.23
+
+    @pytest.mark.asyncio
+    async def test_call_count_proxied(self) -> None:
+        """call_count should be proxied from the wrapped provider."""
+        from piano.llm.provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test-key")
+        provider._call_count = 42
+        cached = CachedLLMProvider(provider)
+        assert cached.call_count == 42
+
+    def test_proxy_defaults_for_mock(self) -> None:
+        """When wrapped provider lacks properties, defaults should be returned."""
+        mock = MockLLMProvider()
+        cached = CachedLLMProvider(mock)
+        assert cached.total_cost_usd == 0.0
+        assert cached.call_count == 0

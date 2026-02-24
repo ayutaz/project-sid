@@ -23,6 +23,7 @@ __all__ = [
     "ThresholdResult",
 ]
 
+import math
 import statistics
 from collections import defaultdict
 from datetime import datetime  # noqa: TC003 (needed at runtime by Pydantic)
@@ -30,7 +31,13 @@ from enum import StrEnum
 
 import structlog
 from pydantic import BaseModel, Field
-from scipy import stats
+
+try:
+    from scipy import stats as _scipy_stats
+
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
 
 logger = structlog.get_logger(__name__)
 
@@ -286,8 +293,6 @@ class CollectiveIntelligence:
         Returns:
             Confidence score in [0.0, 1.0].
         """
-        import math
-
         if num_observers <= 0:
             return 0.0
 
@@ -344,11 +349,7 @@ class CollectiveIntelligence:
             num_predictions = len(predicted_list)
 
             # Compute Pearson correlation
-            if num_predictions >= 2:
-                r, _ = stats.pearsonr(predicted_list, actual_list)
-                pearson_r = float(r)
-            else:
-                pearson_r = 0.0
+            pearson_r = _safe_pearson(predicted_list, actual_list) if num_predictions >= 2 else 0.0
 
             # Compute MAE
             if num_predictions > 0:
@@ -446,3 +447,35 @@ class CollectiveIntelligence:
         for obs in observations:
             by_target[obs.target_id].append(obs)
         return dict(by_target)
+
+
+def _safe_pearson(xs: list[float], ys: list[float]) -> float:
+    """Compute Pearson r, using scipy if available, else manual implementation.
+
+    Args:
+        xs: First variable.
+        ys: Second variable (same length as *xs*).
+
+    Returns:
+        Pearson correlation coefficient, or 0.0 on degenerate input.
+    """
+    if _HAS_SCIPY:
+        r, _ = _scipy_stats.pearsonr(xs, ys)
+        return float(r)
+
+    n = len(xs)
+    if n < 2 or n != len(ys):
+        return 0.0
+
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+
+    denom = math.sqrt(var_x * var_y)
+    if denom == 0.0:
+        return 0.0
+
+    return cov / denom

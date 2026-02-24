@@ -162,6 +162,8 @@ class PerformanceBenchmark:
         self._ticks.clear()
         self._llm_calls.clear()
         self._bridge_commands.clear()
+        # time.monotonic() is used instead of time.time() to avoid
+        # clock adjustments affecting duration measurements.
         self._start_time = time.monotonic()
         self._stop_time = None
         self._running = True
@@ -259,8 +261,12 @@ class PerformanceBenchmark:
 
     def _compute_result(self) -> BenchmarkResult:
         """Build the benchmark result from collected data."""
-        assert self._start_time is not None
-        assert self._stop_time is not None
+        if self._start_time is None:
+            msg = "start_time is None: call start() before computing results"
+            raise RuntimeError(msg)
+        if self._stop_time is None:
+            msg = "stop_time is None: call stop() before computing results"
+            raise RuntimeError(msg)
 
         duration = self._stop_time - self._start_time
 
@@ -521,7 +527,7 @@ class RegressionDetector:
                         metric_name=metric_name,
                         baseline=baseline_val,
                         current=current_val,
-                        change_pct=float("inf"),
+                        change_pct=99999.0,
                         threshold_pct=threshold_pct,
                     )
                 )

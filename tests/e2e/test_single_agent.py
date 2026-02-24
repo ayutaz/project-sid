@@ -110,8 +110,11 @@ class TestSingleAgentE2E:
         # Start agent in background
         run_task = asyncio.create_task(agent.run())
 
-        # Let it run for a bit
-        await asyncio.sleep(0.1)
+        # Wait until at least one tick has executed
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            if fast_mod.tick_count > 0:
+                break
 
         # Shutdown
         await agent.shutdown()

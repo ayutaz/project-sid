@@ -187,7 +187,7 @@ class TestWorldQuery:
 
     def test_world_query_invalid_type_raises(self) -> None:
         """WorldQuery raises ValueError for invalid query_type."""
-        with pytest.raises(ValueError, match="Invalid query_type"):
+        with pytest.raises(ValueError, match="Input should be"):
             WorldQuery(query_type="invalid_type")
 
     def test_world_query_serialization(self) -> None:

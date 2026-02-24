@@ -259,6 +259,30 @@ class TestMemeTracker:
         matches = tracker.detect_meme("a2", "sacred stuff maybe")
         assert len(matches) == 0
 
+    def test_detect_meme_early_exit_length_difference(self) -> None:
+        """Memes with extreme length difference are skipped early."""
+        tracker = MemeTracker(similarity_threshold=0.6)
+        meme = Meme(id="long-meme", content="a" * 100, origin_agent="a1")
+        tracker.register_meme(meme)
+        # Very short utterance can't match (max_possible ratio too low)
+        matches = tracker.detect_meme("a2", "ab")
+        assert len(matches) == 0
+
+    def test_detect_meme_cache_hit(self) -> None:
+        """Repeated detection calls use the similarity cache."""
+        tracker = MemeTracker(similarity_threshold=0.6)
+        meme = Meme(id="cached", content="the sun is sacred", origin_agent="a1")
+        tracker.register_meme(meme)
+
+        # First call populates cache
+        tracker.detect_meme("a2", "the sun is sacred")
+        assert len(tracker._similarity_cache) > 0
+
+        # Second call with same text should use cache
+        tracker.detect_meme("a3", "the sun is sacred")
+        # Agent a3 should also be a carrier
+        assert "a3" in tracker.get_meme("cached").carriers
+
 
 # ---------------------------------------------------------------------------
 # MemeAnalyzer tests

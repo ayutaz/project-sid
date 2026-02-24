@@ -45,8 +45,6 @@ class BridgeSettings(BaseModel):
     """ZMQ bridge connection settings."""
 
     host: str = "localhost"
-    command_port: int = 5555
-    event_port: int = 5556
     tls_enabled: bool = False
     curve_public_key: str | None = None
     curve_secret_key: str | None = None

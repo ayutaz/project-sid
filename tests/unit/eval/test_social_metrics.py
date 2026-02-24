@@ -184,6 +184,58 @@ class TestSocialCognitionMetrics:
         assert SocialCognitionMetrics.sentiment_accuracy([]) == 0.0
 
 
+class TestSocialCognitionWithoutScipy:
+    """Tests for social cognition metrics using manual Pearson (no scipy)."""
+
+    def test_manual_pearson_perfect_positive(self, monkeypatch):
+        """Manual Pearson returns 1.0 for perfect positive correlation."""
+        import piano.eval.social_metrics as sm
+
+        monkeypatch.setattr(sm, "_HAS_SCIPY", False)
+
+        predictions = [
+            SentimentPrediction(
+                agent_id=f"a{i}", target_id=f"t{i}", predicted=i * 0.1, actual=i * 0.1
+            )
+            for i in range(10)
+        ]
+        r = SocialCognitionMetrics.pearson_correlation(predictions)
+        assert abs(r - 1.0) < 1e-10
+
+    def test_manual_pearson_perfect_negative(self, monkeypatch):
+        """Manual Pearson returns -1.0 for perfect negative correlation."""
+        import piano.eval.social_metrics as sm
+
+        monkeypatch.setattr(sm, "_HAS_SCIPY", False)
+
+        predictions = [
+            SentimentPrediction(
+                agent_id=f"a{i}",
+                target_id=f"t{i}",
+                predicted=i * 0.1,
+                actual=1.0 - i * 0.1,
+            )
+            for i in range(10)
+        ]
+        r = SocialCognitionMetrics.pearson_correlation(predictions)
+        assert abs(r - (-1.0)) < 1e-10
+
+    def test_manual_pearson_constant_input(self, monkeypatch):
+        """Manual Pearson returns 0.0 for constant predicted values."""
+        import piano.eval.social_metrics as sm
+
+        monkeypatch.setattr(sm, "_HAS_SCIPY", False)
+
+        predictions = [
+            SentimentPrediction(
+                agent_id=f"a{i}", target_id=f"t{i}", predicted=0.5, actual=i * 0.1
+            )
+            for i in range(10)
+        ]
+        r = SocialCognitionMetrics.pearson_correlation(predictions)
+        assert r == 0.0
+
+
 class TestSpecializationMetrics:
     """Tests for role specialization metrics."""
 

@@ -111,17 +111,21 @@ class SocialAwarenessModule(Module):
         sas: SharedAgentState,
         elapsed_since_last: float,
     ) -> tuple[bool, ActivationTrigger | None]:
-        """Determine if the module should activate on this tick.
+        """Synchronous pre-check for activation (best-effort).
+
+        The primary activation logic runs in the async ``tick()`` method via
+        ``_check_activation()``.  This synchronous variant checks the timer
+        condition only, since SAS reads are async.
 
         Args:
-            sas: Shared agent state (not used in async context, passed for checks).
+            sas: Shared agent state (not inspected synchronously).
             elapsed_since_last: Time elapsed since last activation (seconds).
 
         Returns:
             (should_activate, trigger_type) tuple.
         """
-        # Will be checked asynchronously in tick() - this is a placeholder
-        # for synchronous pre-check if needed
+        if elapsed_since_last >= self.social_goal_interval:
+            return True, ActivationTrigger.SOCIAL_GOAL_CYCLE
         return False, None
 
     async def tick(self, sas: SharedAgentState) -> Any:
@@ -147,7 +151,7 @@ class SocialAwarenessModule(Module):
             elapsed = 999.0
 
         # Check activation conditions
-        should_activate, trigger = await self._check_activation(sas, elapsed)
+        should_activate, trigger, percepts = await self._check_activation(sas, elapsed)
 
         if not should_activate:
             return ModuleResult(
@@ -171,7 +175,7 @@ class SocialAwarenessModule(Module):
 
         # Gather context for LLM inference
         try:
-            context = await self._gather_context(sas)
+            context = await self._gather_context(sas, percepts=percepts)
             output = await self._infer_social_context(context)
 
             # Update SAS with new social data
@@ -205,7 +209,7 @@ class SocialAwarenessModule(Module):
         self,
         sas: SharedAgentState,
         elapsed: float,
-    ) -> tuple[bool, ActivationTrigger | None]:
+    ) -> tuple[bool, ActivationTrigger | None, Any]:
         """Check activation conditions asynchronously.
 
         Args:
@@ -213,34 +217,38 @@ class SocialAwarenessModule(Module):
             elapsed: Time elapsed since last activation.
 
         Returns:
-            (should_activate, trigger_type) tuple.
+            (should_activate, trigger_type, percepts) tuple.
         """
         percepts = await sas.get_percepts()
 
         # Condition 1: Conversation ongoing (chat messages present)
         if percepts.chat_messages:
-            return True, ActivationTrigger.CONVERSATION_ONGOING
+            return True, ActivationTrigger.CONVERSATION_ONGOING, percepts
 
         # Condition 2: Nearby agents detected
         if percepts.nearby_players:
-            return True, ActivationTrigger.NEARBY_AGENT
+            return True, ActivationTrigger.NEARBY_AGENT, percepts
 
         # Condition 3: Social goal cycle timer
         if elapsed >= self.social_goal_interval:
-            return True, ActivationTrigger.SOCIAL_GOAL_CYCLE
+            return True, ActivationTrigger.SOCIAL_GOAL_CYCLE, percepts
 
-        return False, None
+        return False, None, percepts
 
-    async def _gather_context(self, sas: SharedAgentState) -> dict[str, Any]:
+    async def _gather_context(
+        self, sas: SharedAgentState, *, percepts: Any | None = None
+    ) -> dict[str, Any]:
         """Gather social context from SAS for LLM inference.
 
         Args:
             sas: Shared agent state.
+            percepts: Pre-fetched percepts to avoid duplicate SAS read.
 
         Returns:
             Context dictionary with relevant social information.
         """
-        percepts = await sas.get_percepts()
+        if percepts is None:
+            percepts = await sas.get_percepts()
         social = await sas.get_social()
         goals = await sas.get_goals()
         reflection = await sas.get_self_reflection()
@@ -379,7 +387,8 @@ Example:
         for agent_id, sentiment in output.sentiment_updates.items():
             # Blend new sentiment with existing (60% new, 40% old)
             current = social.relationships.get(agent_id, 0.0)
-            social.relationships[agent_id] = 0.6 * sentiment + 0.4 * current
+            blended = 0.6 * sentiment + 0.4 * current
+            social.relationships[agent_id] = max(-1.0, min(1.0, blended))
 
         # Store inferred intents in recent_interactions
         if output.inferred_intents or output.social_signals:

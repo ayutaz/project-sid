@@ -14,6 +14,7 @@ __all__ = [
     "EventType",
     "ProtocolSerializer",
     "WorldQuery",
+    "WorldQueryType",
 ]
 
 import json
@@ -93,23 +94,21 @@ class EventType(StrEnum):
 # --- World Query Protocol ---
 
 
+class WorldQueryType(StrEnum):
+    """Valid world query types."""
+
+    NEARBY_BLOCKS = "nearby_blocks"
+    NEARBY_ENTITIES = "nearby_entities"
+    INVENTORY = "inventory"
+    POSITION = "position"
+    TIME = "time"
+
+
 class WorldQuery(BaseModel):
     """World state query request for the bridge."""
 
-    query_type: str  # "nearby_blocks", "nearby_entities", "inventory", "position", "time"
+    query_type: WorldQueryType
     params: dict[str, Any] = Field(default_factory=dict)
-
-    def model_post_init(self, __context: Any) -> None:
-        """Validate query_type after initialization."""
-        valid_types = {
-            "nearby_blocks",
-            "nearby_entities",
-            "inventory",
-            "position",
-            "time",
-        }
-        if self.query_type not in valid_types:
-            raise ValueError(f"Invalid query_type: {self.query_type}. Must be one of {valid_types}")
 
 
 # --- Batch Command Protocol ---
@@ -241,7 +240,7 @@ class ProtocolSerializer:
         """
         try:
             return dict(json.loads(data.decode("utf-8")))
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, TypeError) as e:
             raise ValueError(f"Failed to deserialize response: {e}") from e
 
 

@@ -424,3 +424,53 @@ async def test_agent_config_defaults():
     assert config.initial_position["y"] == 0.0
     assert config.initial_position["z"] == 0.0
     assert config.role_hint == ""
+
+
+# --- Partial Initialization Failure Tests ---
+
+
+async def test_start_all_handles_partial_init_failure():
+    """Test that start_all handles partial agent initialization failures.
+
+    When one agent's initialize() fails in start_all's gather, others
+    should still proceed without raising.
+    """
+    from unittest.mock import patch
+
+    config = OrchestratorConfig(max_agents=5, tick_interval=0.1)
+    orchestrator = AgentOrchestrator(config, lambda aid: InMemorySAS(aid))
+
+    # Add 3 agents normally
+    for i in range(3):
+        agent_config = AgentConfig(agent_id=f"agent-{i:03d}")
+        agent = await orchestrator.add_agent(agent_config)
+        module = DummyModule(f"module-{i}", ModuleTier.FAST)
+        agent.register_module(module)
+
+    # Make the second agent's initialize() fail during start_all
+    failing_agent = orchestrator.get_agent("agent-001")
+    assert failing_agent is not None
+
+    async def failing_init():
+        raise RuntimeError("Init failed for agent-001")
+
+    with patch.object(failing_agent, "initialize", side_effect=failing_init):
+        # start_all should not raise even though one agent fails init
+        await orchestrator.start_all()
+
+    await asyncio.sleep(0.2)
+
+    # Clean up
+    await orchestrator.stop_all()
+
+
+async def test_orchestrator_run_tasks_initialized_to_none():
+    """Test that _run_tasks is properly initialized in __init__."""
+    config = OrchestratorConfig(max_agents=5, tick_interval=0.1)
+    orchestrator = AgentOrchestrator(config, lambda aid: InMemorySAS(aid))
+
+    # _run_tasks should be None initially (not missing)
+    assert orchestrator._run_tasks is None
+
+    # stop_all should work without error even without start_all
+    await orchestrator.stop_all()

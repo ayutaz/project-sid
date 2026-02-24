@@ -34,6 +34,7 @@ __all__ = [
     "TaxComplianceMetrics",
     "TransmissionRecord",
     "VotingMetrics",
+    "compute_percentile",
     "fit_sir_model",
     "generate_governance_report",
     "generate_report",
@@ -69,6 +70,7 @@ from piano.eval.performance import (
     RegressionDetector,
     RegressionItem,
     RegressionReport,
+    compute_percentile,
 )
 from piano.eval.role_inference import (
     AgentRole,

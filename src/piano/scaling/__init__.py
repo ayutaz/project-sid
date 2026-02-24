@@ -3,6 +3,7 @@
 from piano.scaling.resource_limiter import (
     BackpressurePolicy,
     ResourceLimiter,
+    ResourceType,
     ResourceUsage,
 )
 from piano.scaling.sharding import (
@@ -17,7 +18,9 @@ from piano.scaling.supervisor import (
     WorkerHandle,
     WorkerInfo,
     WorkerState,
-    WorkerStats,
+)
+from piano.scaling.supervisor import (
+    WorkerStats as SupervisorWorkerStats,
 )
 from piano.scaling.worker import AgentWorkerProcess, WorkerStatus
 from piano.scaling.worker import WorkerStats as WorkerProcessStats
@@ -27,16 +30,17 @@ __all__ = [
     "AgentWorkerProcess",
     "BackpressurePolicy",
     "ResourceLimiter",
+    "ResourceType",
     "ResourceUsage",
     "ShardConfig",
     "ShardManager",
     "ShardStats",
     "ShardingStrategy",
     "SupervisorConfig",
+    "SupervisorWorkerStats",
     "WorkerHandle",
     "WorkerInfo",
     "WorkerProcessStats",
     "WorkerState",
-    "WorkerStats",
     "WorkerStatus",
 ]

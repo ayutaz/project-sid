@@ -373,7 +373,7 @@ class TestConstitutionMetrics:
         assert delta == pytest.approx(-1.0)
 
     def test_amendment_effect_empty_windows(self) -> None:
-        """Returns 0.0 when either window has no behaviours."""
+        """Returns None when either window has no behaviours."""
         cm = ConstitutionMetrics()
         cm.record_rule("r1", "No stealing", enacted_at=datetime(2025, 1, 1, tzinfo=UTC))
 
@@ -383,7 +383,7 @@ class TestConstitutionMetrics:
             before_window=(base_time, base_time + timedelta(hours=1)),
             after_window=(base_time + timedelta(days=1), base_time + timedelta(days=1, hours=1)),
         )
-        assert delta == 0.0
+        assert delta is None
 
     def test_get_all_compliance(self) -> None:
         """get_all_compliance returns a dict for every recorded rule."""

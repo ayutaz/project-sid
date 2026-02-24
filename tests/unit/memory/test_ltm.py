@@ -615,3 +615,130 @@ async def test_empty_metadata(store: InMemoryLTMStore) -> None:
 
     assert retrieved is not None
     assert retrieved.metadata == {}
+
+
+# --- InMemoryLTMStore Capacity Limit Tests ---
+
+
+async def test_inmemory_store_capacity_limit() -> None:
+    """Test that InMemoryLTMStore evicts oldest entries when at max_entries."""
+    store = InMemoryLTMStore(max_entries=3)
+    await store.initialize()
+
+    agent_id = "agent_001"
+
+    entries = []
+    for i in range(5):
+        ts = datetime.now(UTC) - timedelta(hours=5 - i)  # Oldest first
+        entry = LTMEntry(
+            content=f"Memory {i}",
+            category="episodic",
+            importance=0.5,
+            timestamp=ts,
+            embedding=[float(i), 0.0, 0.0, 0.0],
+        )
+        entries.append(entry)
+        await store.store(agent_id, entry)
+
+    stats = await store.get_stats(agent_id)
+    assert stats["count"] == 3  # Capped at max_entries
+
+    # Oldest entries (0, 1) should be evicted
+    assert await store.retrieve(agent_id, entries[0].id) is None
+    assert await store.retrieve(agent_id, entries[1].id) is None
+    # Newest entries (2, 3, 4) should remain
+    assert await store.retrieve(agent_id, entries[2].id) is not None
+    assert await store.retrieve(agent_id, entries[3].id) is not None
+    assert await store.retrieve(agent_id, entries[4].id) is not None
+
+
+async def test_inmemory_store_update_does_not_evict() -> None:
+    """Updating an existing entry should not trigger eviction."""
+    store = InMemoryLTMStore(max_entries=2)
+    await store.initialize()
+
+    agent_id = "agent_001"
+
+    e1 = LTMEntry(content="First", category="episodic", importance=0.5, embedding=[1.0, 0.0])
+    e2 = LTMEntry(content="Second", category="episodic", importance=0.5, embedding=[0.0, 1.0])
+    await store.store(agent_id, e1)
+    await store.store(agent_id, e2)
+
+    # Update e1 (same ID)
+    e1.content = "First updated"
+    await store.store(agent_id, e1)
+
+    stats = await store.get_stats(agent_id)
+    assert stats["count"] == 2  # No extra eviction
+    retrieved = await store.retrieve(agent_id, e1.id)
+    assert retrieved is not None
+    assert retrieved.content == "First updated"
+
+
+async def test_inmemory_store_default_capacity() -> None:
+    """Default max_entries should be 10000."""
+    store = InMemoryLTMStore()
+    assert store._max_entries == 10000
+
+
+# --- Async QdrantLTMStore Tests (mocked) ---
+
+
+async def test_qdrant_store_uses_async_client() -> None:
+    """QdrantLTMStore should import and use AsyncQdrantClient."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from piano.memory.ltm import QdrantLTMStore
+
+    store = QdrantLTMStore(url="http://localhost:6333")
+
+    mock_client = MagicMock()
+    mock_client.get_collections = AsyncMock(return_value=MagicMock(collections=[]))
+    mock_client.create_collection = AsyncMock()
+    mock_client.upsert = AsyncMock()
+    mock_client.close = AsyncMock()
+
+    # Patch inside qdrant_client module where it's imported from
+    with patch("qdrant_client.AsyncQdrantClient", return_value=mock_client):
+        await store.initialize()
+
+    # Verify client was set
+    assert store._client is mock_client
+
+
+async def test_qdrant_ensure_collection_idempotent() -> None:
+    """_ensure_collection should handle race conditions gracefully."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from piano.memory.ltm import QdrantLTMStore
+
+    store = QdrantLTMStore(url="http://localhost:6333")
+
+    # Mock async client
+    mock_client = MagicMock()
+    # First call: collection does not exist
+    mock_collections = MagicMock()
+    mock_collections.collections = []
+
+    # Create a proper mock for the collection that exists after race
+    existing_collection = MagicMock()
+    existing_collection.name = "ltm_test_agent"  # Set .name as attribute, not mock name
+    mock_collections_after = MagicMock()
+    mock_collections_after.collections = [existing_collection]
+
+    mock_client.get_collections = AsyncMock(
+        side_effect=[
+            mock_collections,  # First check: not exists
+            mock_collections_after,  # After race: exists
+        ]
+    )
+    # create_collection raises to simulate race condition
+    mock_client.create_collection = AsyncMock(side_effect=Exception("Collection already exists"))
+
+    store._client = mock_client
+
+    # Should not raise due to race condition handling
+    await store._ensure_collection("test_agent")
+
+    # Verify get_collections was called twice (once to check, once to verify after exception)
+    assert mock_client.get_collections.call_count == 2

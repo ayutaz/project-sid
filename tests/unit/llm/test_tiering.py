@@ -31,7 +31,6 @@ def test_model_config_creation() -> None:
     assert config.cost_per_1k_output == 10.0
     assert config.max_tokens == 4096
     assert config.latency_ms_estimate == 800.0
-    assert config.is_local is False
 
 
 def test_model_config_avg_cost() -> None:
@@ -46,28 +45,15 @@ def test_model_config_avg_cost() -> None:
     assert config.avg_cost_per_1k == 6.25
 
 
-def test_model_config_is_local_true() -> None:
-    """Test model configuration with is_local=True."""
+def test_model_config_zero_cost() -> None:
+    """Test model configuration with zero cost."""
     config = ModelConfig(
-        model_id="custom-local",
+        model_id="cheap-model",
         tier=3,
         cost_per_1k_input=0.0,
         cost_per_1k_output=0.0,
-        is_local=True,
     )
-    assert config.is_local is True
     assert config.avg_cost_per_1k == 0.0
-
-
-def test_model_config_is_local_default_false() -> None:
-    """Test model configuration defaults is_local to False."""
-    config = ModelConfig(
-        model_id="gpt-4o-mini",
-        tier=3,
-        cost_per_1k_input=0.000150,
-        cost_per_1k_output=0.000600,
-    )
-    assert config.is_local is False
 
 
 # --- ModelRegistry Tests ---
@@ -443,3 +429,58 @@ def test_router_cost_tracking() -> None:
     assert router._total_cost_tracked == 8.5
     # Budget should be reduced
     assert router.budget_remaining == 91.5
+
+
+def test_router_fallback_after_failures() -> None:
+    """Test that fallback chain skips models with too many failures."""
+    registry = ModelRegistry()
+    # SLOW chain has ["gpt-4o", "gpt-4o-mini"]
+    router = ModelRouter(registry=registry)
+
+    # Report 3 failures for gpt-4o (threshold is 3)
+    router.report_failure("gpt-4o")
+    router.report_failure("gpt-4o")
+    router.report_failure("gpt-4o")
+
+    request = LLMRequest(prompt="test", tier=ModuleTier.SLOW)
+    selected = router.select_model(request)
+    # gpt-4o should be skipped, fall back to gpt-4o-mini
+    assert selected == "gpt-4o-mini"
+
+
+def test_router_fallback_chain_resets_when_all_failed() -> None:
+    """Test that chain resets and returns first model when all models have failures."""
+    registry = ModelRegistry()
+    router = ModelRouter(registry=registry)
+
+    # Fail all models in the SLOW chain
+    for _ in range(3):
+        router.report_failure("gpt-4o")
+        router.report_failure("gpt-4o-mini")
+
+    request = LLMRequest(prompt="test", tier=ModuleTier.SLOW)
+    selected = router.select_model(request)
+    # Chain should reset, return first model
+    assert selected == "gpt-4o"
+
+
+def test_router_fallback_chain_success_resets_failures() -> None:
+    """Test that success resets failure count, allowing model to be selected again."""
+    registry = ModelRegistry()
+    router = ModelRouter(registry=registry)
+
+    # Fail gpt-4o 3 times
+    for _ in range(3):
+        router.report_failure("gpt-4o")
+
+    # Select should skip gpt-4o
+    request = LLMRequest(prompt="test", tier=ModuleTier.SLOW)
+    selected = router.select_model(request)
+    assert selected == "gpt-4o-mini"
+
+    # Report success, resetting failure count
+    router.report_success("gpt-4o", cost=0.01)
+
+    # Now gpt-4o should be selectable again
+    selected = router.select_model(request)
+    assert selected == "gpt-4o"

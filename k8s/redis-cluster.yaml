@@ -67,6 +67,10 @@ data:
     maxmemory 2gb
     maxmemory-policy allkeys-lru
 
+    # Authentication: password is injected via REDISCLI_AUTH env var
+    # and requirepass is set via command-line --requirepass flag
+    # (see container args below)
+
     # Network
     bind 0.0.0.0
     protected-mode no
@@ -110,6 +114,22 @@ spec:
           command:
             - redis-server
             - /etc/redis/redis.conf
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --masterauth
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
+            # REDISCLI_AUTH allows redis-cli probes to authenticate
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
           ports:
             - name: redis
               containerPort: 6379
@@ -168,6 +188,7 @@ metadata:
     app.kubernetes.io/part-of: project-sid
 spec:
   backoffLimit: 5
+  ttlSecondsAfterFinished: 300
   template:
     metadata:
       labels:
@@ -180,6 +201,12 @@ spec:
         # Wait until all 6 Redis pods are ready before attempting cluster creation
         - name: wait-for-redis
           image: redis:7-alpine
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
           command:
             - /bin/sh
             - -c
@@ -197,6 +224,12 @@ spec:
       containers:
         - name: cluster-create
           image: redis:7-alpine
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: piano-secrets
+                  key: redis-password
           command:
             - /bin/sh
             - -c
@@ -209,7 +242,7 @@ spec:
               fi
 
               echo "Creating Redis cluster..."
-              redis-cli --cluster create \
+              redis-cli -a "$REDISCLI_AUTH" --cluster create \
                 redis-cluster-0.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
                 redis-cluster-1.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
                 redis-cluster-2.redis-cluster-headless.project-sid.svc.cluster.local:6379 \
@@ -220,3 +253,18 @@ spec:
 
               echo "Redis cluster initialization complete."
               redis-cli -h redis-cluster-0.redis-cluster-headless.project-sid.svc.cluster.local cluster info
+---
+# PodDisruptionBudget: ensure at least 2 redis nodes available during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-cluster-pdb
+  namespace: project-sid
+  labels:
+    app.kubernetes.io/name: redis-cluster
+    app.kubernetes.io/part-of: project-sid
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-cluster

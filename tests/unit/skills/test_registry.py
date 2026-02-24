@@ -32,11 +32,17 @@ class TestSkillRegistry:
         assert skill.execute_fn is _dummy_skill
         assert skill.description == "Move somewhere"
 
-    def test_register_duplicate_raises(self) -> None:
+    def test_register_duplicate_logs_warning_and_skips(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         registry = SkillRegistry()
-        registry.register("move", _dummy_skill)
-        with pytest.raises(ValueError, match="already registered"):
-            registry.register("move", _dummy_skill)
+        registry.register("move", _dummy_skill, description="first")
+        with caplog.at_level("WARNING", logger="piano.skills.registry"):
+            registry.register("move", _dummy_skill, description="second")
+        assert any("already registered" in rec.message for rec in caplog.records)
+        # First registration is kept
+        assert registry.get("move").description == "first"
+        assert len(registry) == 1
 
     def test_get_missing_raises(self) -> None:
         registry = SkillRegistry()

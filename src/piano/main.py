@@ -22,6 +22,8 @@ from piano.llm.mock import MockLLMProvider
 
 logger = structlog.get_logger()
 
+_IS_WINDOWS = sys.platform == "win32"
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments.
@@ -32,9 +34,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     Returns:
         Parsed arguments namespace.
     """
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        _version = _pkg_version("piano")
+    except Exception:
+        _version = "0.0.0-dev"
+
     parser = argparse.ArgumentParser(
         prog="piano",
         description="PIANO simulation launcher",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_version}",
     )
     parser.add_argument(
         "--agents",
@@ -88,12 +102,51 @@ def _configure_logging(level: str) -> None:
     )
 
 
-def _create_provider(args: argparse.Namespace) -> Any:
-    """Create an LLM provider based on CLI flags."""
+def _install_shutdown_handler(shutdown_event: asyncio.Event) -> None:
+    """Install signal handlers that set *shutdown_event* on SIGINT/SIGTERM.
+
+    On Windows, ``loop.add_signal_handler`` is not supported, so we fall back
+    to ``signal.signal`` with a thread-safe ``call_soon_threadsafe``.
+    """
+
+    def _on_signal(*_args: object) -> None:
+        logger.info("shutdown_signal_received")
+        shutdown_event.set()
+
+    if _IS_WINDOWS:
+        loop = asyncio.get_running_loop()
+
+        def _win_handler(*_args: object) -> None:
+            loop.call_soon_threadsafe(_on_signal)
+
+        signal.signal(signal.SIGINT, _win_handler)
+        with contextlib.suppress(OSError):
+            signal.signal(signal.SIGTERM, _win_handler)
+    else:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, _on_signal)
+
+
+def _create_provider(args: argparse.Namespace, settings: PianoSettings | None = None) -> Any:
+    """Create an LLM provider based on CLI flags.
+
+    Args:
+        args: Parsed CLI arguments.
+        settings: Optional PianoSettings to configure the provider.
+    """
     if args.mock_llm:
         return MockLLMProvider()
     from piano.llm.provider import OpenAIProvider
 
+    if settings is not None:
+        llm_cfg = settings.llm
+        return OpenAIProvider(
+            api_key=llm_cfg.api_key or None,
+            cost_limit_usd=llm_cfg.cost_limit_usd,
+            calls_per_minute_limit=llm_cfg.calls_per_minute_limit,
+        )
     return OpenAIProvider()
 
 
@@ -109,8 +162,8 @@ def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:
 
             redis_settings = PianoSettings().redis
             return RedisSAS.create_with_settings(redis_settings, agent_id)
-        except Exception:
-            pass  # fall through to in-memory SAS
+        except Exception as e:
+            logger.warning("redis_sas_creation_failed", error=str(e), fallback="in-memory")
 
     # In-memory fallback (always used in mock mode)
     from piano.core.sas import SharedAgentState
@@ -305,11 +358,18 @@ async def run(args: argparse.Namespace) -> None:
     """
     settings_kwargs: dict[str, Any] = {}
     if args.config:
+        import pathlib
+
+        config_path = pathlib.Path(args.config)
+        if not config_path.exists():
+            logger.warning("config_file_not_found", path=args.config)
         settings_kwargs["_env_file"] = args.config
     settings = PianoSettings(**settings_kwargs)
 
-    _configure_logging(args.log_level)
-    provider = _create_provider(args)
+    # CLI --log-level takes priority; fall back to settings.log.level
+    log_level = args.log_level if args.log_level != "INFO" else settings.log.level
+    _configure_logging(log_level)
+    provider = _create_provider(args, settings=settings)
 
     tick_interval = settings.agent.tick_interval_ms / 1000.0
 
@@ -365,15 +425,7 @@ async def _run_single(
     logger.info("single_agent_starting", agent_id=agent_id, max_ticks=args.ticks)
 
     shutdown_event = asyncio.Event()
-
-    def _signal_handler() -> None:
-        logger.info("shutdown_signal_received")
-        shutdown_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _signal_handler)
+    _install_shutdown_handler(shutdown_event)
 
     run_task = asyncio.create_task(agent.run(max_ticks=args.ticks))
 
@@ -480,15 +532,7 @@ async def _run_multi(
     logger.info("multi_agent_started", agent_count=args.agents)
 
     shutdown_event = asyncio.Event()
-
-    def _signal_handler() -> None:
-        logger.info("shutdown_signal_received")
-        shutdown_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _signal_handler)
+    _install_shutdown_handler(shutdown_event)
 
     # If --ticks is set, monitor agent tick counts and stop when all reach the target
     monitor_task: asyncio.Task[None] | None = None

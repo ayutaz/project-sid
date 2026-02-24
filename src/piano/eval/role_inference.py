@@ -16,6 +16,7 @@ __all__ = [
     "RoleInferenceResult",
 ]
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -220,7 +221,7 @@ class RoleInferencePipeline:
 
         try:
             response = await self._llm.complete(llm_request)
-        except Exception:
+        except (RuntimeError, ValueError, KeyError, OSError):
             logger.exception(
                 "role_inference_llm_error",
                 agent_id=request.agent_id,
@@ -237,9 +238,9 @@ class RoleInferencePipeline:
     async def infer_roles_batch(
         self, requests: list[RoleInferenceRequest]
     ) -> list[RoleInferenceResult]:
-        """Infer roles for multiple agents.
+        """Infer roles for multiple agents with bounded concurrency.
 
-        Processes requests sequentially to respect rate limits.
+        Uses a semaphore to limit concurrent LLM calls to 5.
 
         Args:
             requests: List of role inference requests.
@@ -247,11 +248,17 @@ class RoleInferencePipeline:
         Returns:
             List of RoleInferenceResult in the same order as requests.
         """
-        results: list[RoleInferenceResult] = []
-        for request in requests:
-            result = await self.infer_role(request)
-            results.append(result)
-        return results
+        if not requests:
+            return []
+
+        sem = asyncio.Semaphore(5)
+
+        async def _limited(req: RoleInferenceRequest) -> RoleInferenceResult:
+            async with sem:
+                return await self.infer_role(req)
+
+        results = await asyncio.gather(*[_limited(r) for r in requests])
+        return list(results)
 
     @staticmethod
     def get_role_distribution(

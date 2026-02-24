@@ -33,10 +33,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --dev
 
       - name: Run integration tests (mock bridge)
         run: uv run pytest tests/integration/test_simulation_flow.py tests/integration/test_perception_flow.py -x -q --timeout=60
+
+      # NOTE: Full E2E tests with --run-e2e require a running MC server and bridge.
+      # They are excluded from CI until Docker-in-Docker or a dedicated runner is set up.
 
   docker-build:
     runs-on: ubuntu-latest

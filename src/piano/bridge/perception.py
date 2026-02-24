@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 from collections import deque
 from typing import TYPE_CHECKING, Any
@@ -92,7 +90,11 @@ class BridgePerceptionModule(Module):
     def _handle_perception(self, data: dict[str, Any], percepts: PerceptData) -> None:
         """Update percepts from a perception event."""
         if "position" in data:
-            percepts.position = data["position"]
+            pos = data["position"]
+            if isinstance(pos, dict) and all(k in pos for k in ("x", "y", "z")):
+                percepts.position = pos
+            else:
+                logger.warning("Invalid position data (missing x/y/z keys): %s", pos)
         if "health" in data:
             percepts.health = float(data["health"])
         if "food" in data:
@@ -136,10 +138,5 @@ class BridgePerceptionModule(Module):
     async def shutdown(self) -> None:
         """Stop event listener and clear buffer."""
         self._listener_started = False
-        event_task = getattr(self._bridge, "_event_task", None)
-        if isinstance(event_task, asyncio.Task):
-            event_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await event_task
-            self._bridge._event_task = None
+        await self._bridge.stop_event_listener()
         self._buffer.clear()

@@ -33,7 +33,6 @@ __all__ = [
 import asyncio
 import contextvars
 import functools
-import inspect
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -79,7 +78,7 @@ class SpanEvent(BaseModel):
     """An event recorded within a span's lifetime."""
 
     name: str
-    timestamp: float = Field(default_factory=time.monotonic)
+    timestamp: float = Field(default_factory=time.time)
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -393,23 +392,17 @@ class Tracer:
 
                 @functools.wraps(fn)
                 async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                    async with self.start_async_span(span_name, attributes=attributes) as span:
-                        try:
-                            return await fn(*args, **kwargs)
-                        except Exception as exc:
-                            span.set_status(SpanStatus.ERROR, str(exc))
-                            raise
+                    # Error handling is done by start_async_span context manager.
+                    async with self.start_async_span(span_name, attributes=attributes):
+                        return await fn(*args, **kwargs)
 
                 return async_wrapper  # type: ignore[return-value]
 
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                with self.start_span(span_name, attributes=attributes) as span:
-                    try:
-                        return fn(*args, **kwargs)
-                    except Exception as exc:
-                        span.set_status(SpanStatus.ERROR, str(exc))
-                        raise
+                # Error handling is done by start_span context manager.
+                with self.start_span(span_name, attributes=attributes):
+                    return fn(*args, **kwargs)
 
             return sync_wrapper  # type: ignore[return-value]
 
@@ -439,4 +432,4 @@ class Tracer:
 
 def _is_coroutine_function(fn: Any) -> bool:
     """Return ``True`` if *fn* is an async function (works with wrapped fns)."""
-    return asyncio.iscoroutinefunction(fn) or inspect.iscoroutinefunction(fn)
+    return asyncio.iscoroutinefunction(fn)

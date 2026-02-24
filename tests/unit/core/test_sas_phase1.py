@@ -225,6 +225,24 @@ class TestDataTypes:
         assert isinstance(result["c"], float)
         assert result == {"a": 1.0, "b": 0.5, "c": 0.0}
 
+    async def test_personality_skips_invalid_float_values(self, phase1: SASPhase1Mixin) -> None:
+        """Personality values that cannot be converted to float should be skipped."""
+        await phase1.update_personality(
+            {"openness": 0.8, "bad_value": "not_a_number", "valid": 0.5}
+        )
+        result = await phase1.get_personality()
+
+        # Non-numeric values should be silently skipped
+        assert result == {"openness": 0.8, "valid": 0.5}
+        assert "bad_value" not in result
+
+    async def test_personality_handles_none_values(self, phase1: SASPhase1Mixin) -> None:
+        """Personality values that are None should be skipped."""
+        await phase1.update_personality({"openness": 0.8, "bad": None})
+        result = await phase1.get_personality()
+        assert result == {"openness": 0.8}
+        assert "bad" not in result
+
     async def test_emotion_state_preserves_nested_structure(self, phase1: SASPhase1Mixin) -> None:
         """Emotion state preserves nested dictionaries and lists."""
         original = {

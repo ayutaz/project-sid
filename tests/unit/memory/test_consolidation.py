@@ -383,7 +383,7 @@ class TestEmbeddingPlaceholder:
         assert isinstance(entry, LTMEntry)
         assert entry.embedding is not None
         assert isinstance(entry.embedding, list)
-        assert len(entry.embedding) == 1536  # text-embedding-3-small dim
+        assert len(entry.embedding) == 384  # MiniLM default dim
 
 
 # --- Module lifecycle tests ---
@@ -498,3 +498,63 @@ class TestConsolidationEdgeCases:
         assert not result.success
         assert result.error is not None
         assert "Storage error" in result.error
+
+
+# --- Embedding dimension unification tests ---
+
+
+class TestEmbeddingDimensionUnified:
+    def test_consolidation_embedding_is_384(self) -> None:
+        """Consolidation placeholder embedding should be 384-dim (MiniLM)."""
+        ltm_store = MockLTMStore()
+        module = MemoryConsolidationModule(ltm_store=ltm_store)
+        embedding = module._generate_embedding_placeholder("test content")
+        assert len(embedding) == 384
+
+    def test_consolidation_embedding_matches_ltm_search(self) -> None:
+        """Consolidation and LTM search embeddings should have the same dimension."""
+        from piano.memory.ltm_search import LTMRetrievalModule
+
+        ltm_store = MockLTMStore()
+        consolidation = MemoryConsolidationModule(ltm_store=ltm_store)
+        consolidation_dim = len(consolidation._generate_embedding_placeholder("test"))
+
+        retrieval_dim = len(LTMRetrievalModule._text_to_embedding_placeholder("test"))
+
+        assert consolidation_dim == retrieval_dim == 384
+
+
+# --- Metadata preservation tests ---
+
+
+class TestMetadataPreservation:
+    @pytest.mark.asyncio
+    async def test_consolidated_from_metadata_preserved(self) -> None:
+        """The 'consolidated_from' list metadata should be preserved as JSON string."""
+        sas = InMemorySAS()
+        ltm_store = MockLTMStore()
+        llm = MockLLMProvider(summary="Summary of events")
+        policy = ConsolidationPolicy(
+            min_importance=0.5,
+            min_age_seconds=0.0,
+            max_stm_before_consolidation=2,
+            batch_size=10,
+        )
+        module = MemoryConsolidationModule(ltm_store=ltm_store, policy=policy, llm_provider=llm)
+
+        e1 = _entry("event1", importance=0.7, age_minutes=2)
+        e2 = _entry("event2", importance=0.8, age_minutes=2)
+        await sas.add_stm(e1)
+        await sas.add_stm(e2)
+
+        result = await module.tick(sas)
+
+        assert result.success
+        summaries = [e for e in ltm_store.stored_entries if e.category == "reflection"]
+        assert len(summaries) == 1
+        # consolidated_from should be a JSON string (not dropped)
+        assert "consolidated_from" in summaries[0].metadata
+        import json
+
+        ids = json.loads(summaries[0].metadata["consolidated_from"])
+        assert len(ids) == 2

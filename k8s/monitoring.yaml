@@ -57,9 +57,10 @@ data:
             action: keep
 
       # Redis metrics (via redis-exporter sidecar if deployed)
-      - job_name: "redis"
-        static_configs:
-          - targets: ["redis-exporter.project-sid.svc.cluster.local:9121"]
+      # TODO: Deploy redis-exporter and uncomment this target
+      # - job_name: "redis"
+      #   static_configs:
+      #     - targets: ["redis-exporter.project-sid.svc.cluster.local:9121"]
 ---
 # Prometheus Deployment
 apiVersion: apps/v1
@@ -290,7 +291,6 @@ spec:
                 secretKeyRef:
                   name: piano-secrets
                   key: grafana-admin-password
-                  optional: true
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources

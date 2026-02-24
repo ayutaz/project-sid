@@ -55,6 +55,16 @@ class MockSAS:
         self.actions.append(entry)
 
 
+class FailingSAS:
+    """SAS mock that raises on add_action."""
+
+    def __init__(self) -> None:
+        self.actions: list[ActionHistoryEntry] = []
+
+    async def add_action(self, entry: ActionHistoryEntry) -> None:
+        raise RuntimeError("SAS connection lost")
+
+
 @pytest.fixture
 def bridge() -> MockBridgeClient:
     return MockBridgeClient()
@@ -361,3 +371,140 @@ class TestSkillExecutorEdgeCases:
                 assert len(sas.actions) == 0
                 # Debug log should mention skipping
                 assert any("no skill mapping" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# New Tests for Fixes
+# ---------------------------------------------------------------------------
+
+
+class TestParameterValidation:
+    """Tests for parameter validation in executor (Fix #4)."""
+
+    async def test_unknown_params_are_filtered(self, registry, sas: MockSAS) -> None:
+        """Unknown params are ignored and logged."""
+        bridge = MockBridgeClient()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas, timeout_s=5.0)
+
+        # move_to expects x, y, z - providing extra params
+        decision = CCDecision(
+            action="move",
+            action_params={"x": 1.0, "y": 2.0, "z": 3.0, "speed": 10.0, "sneak": True},
+        )
+        await executor.on_broadcast(decision)
+        if executor._current_task:
+            await executor._current_task
+
+        # Should succeed because unknown params are filtered out
+        assert len(sas.actions) == 1
+        assert sas.actions[0].success is True
+
+    async def test_validate_params_logs_warning_for_unknown(
+        self, executor: SkillExecutor, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_validate_params logs warning for unknown parameters."""
+        with caplog.at_level(logging.WARNING, logger="piano.skills.executor"):
+            result = executor._validate_params(
+                "move_to",
+                {"x": 1.0, "y": 2.0, "z": 3.0, "unknown_param": True},
+                {"x": "float", "y": "float", "z": "float"},
+            )
+
+        assert "unknown_param" not in result
+        assert result == {"x": 1.0, "y": 2.0, "z": 3.0}
+        assert any("unknown params" in rec.message for rec in caplog.records)
+
+    async def test_validate_params_empty_schema_passes_all(self, executor: SkillExecutor) -> None:
+        """When schema is empty, all params are passed through."""
+        result = executor._validate_params(
+            "some_skill",
+            {"a": 1, "b": 2},
+            {},
+        )
+        assert result == {"a": 1, "b": 2}
+
+    async def test_get_position_skill_execution(self, registry, sas: MockSAS) -> None:
+        """get_position maps to the actual get_position skill and executes."""
+        bridge = MockBridgeClient()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas, timeout_s=5.0)
+
+        decision = CCDecision(action="get_position", action_params={})
+        await executor.on_broadcast(decision)
+        if executor._current_task:
+            await executor._current_task
+
+        assert len(sas.actions) == 1
+        assert sas.actions[0].action == "get_position"
+        assert sas.actions[0].success is True
+
+    async def test_get_inventory_skill_execution(self, registry, sas: MockSAS) -> None:
+        """get_inventory maps to the actual get_inventory skill and executes."""
+        bridge = MockBridgeClient()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=sas, timeout_s=5.0)
+
+        decision = CCDecision(action="get_inventory", action_params={})
+        await executor.on_broadcast(decision)
+        if executor._current_task:
+            await executor._current_task
+
+        assert len(sas.actions) == 1
+        assert sas.actions[0].action == "get_inventory"
+        assert sas.actions[0].success is True
+
+
+class TestCancelCurrentCleanup:
+    """Tests for _cancel_current race condition fix (Fix #6)."""
+
+    async def test_cancel_current_sets_none_before_await(self, registry, sas: MockSAS) -> None:
+        """_current_task is set to None BEFORE awaiting the cancelled task."""
+        slow_bridge = SlowBridgeClient(delay=10.0)
+        executor = SkillExecutor(registry=registry, bridge=slow_bridge, sas=sas, timeout_s=30.0)
+
+        decision = CCDecision(action="move", action_params={"x": 0, "y": 0, "z": 0})
+        await executor.on_broadcast(decision)
+        task = executor._current_task
+        assert task is not None
+        await asyncio.sleep(0.05)
+
+        await executor._cancel_current()
+        # After cancel, _current_task should be None
+        assert executor._current_task is None
+        assert task.done()
+
+    async def test_cancel_current_idempotent(self, executor: SkillExecutor) -> None:
+        """Calling _cancel_current multiple times is safe."""
+        await executor._cancel_current()
+        await executor._cancel_current()
+        assert executor._current_task is None
+
+
+class TestSASFailureHandling:
+    """Tests for SAS failure handling in _record_action (Fix #7)."""
+
+    async def test_sas_failure_does_not_mask_skill_result(self, registry) -> None:
+        """SAS failure in _record_action should not crash the executor."""
+        bridge = MockBridgeClient()
+        failing_sas = FailingSAS()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=failing_sas, timeout_s=5.0)
+
+        decision = CCDecision(action="move", action_params={"x": 1, "y": 2, "z": 3})
+        await executor.on_broadcast(decision)
+        if executor._current_task:
+            result = await executor._current_task
+
+        # Skill execution should still complete despite SAS failure
+        assert result["success"] is True
+
+    async def test_sas_failure_logged(self, registry, caplog: pytest.LogCaptureFixture) -> None:
+        """SAS failure should be logged."""
+        bridge = MockBridgeClient()
+        failing_sas = FailingSAS()
+        executor = SkillExecutor(registry=registry, bridge=bridge, sas=failing_sas, timeout_s=5.0)
+
+        with caplog.at_level(logging.ERROR, logger="piano.skills.executor"):
+            decision = CCDecision(action="chat", action_params={"message": "hi"})
+            await executor.on_broadcast(decision)
+            if executor._current_task:
+                await executor._current_task
+
+        assert any("Failed to record action" in rec.message for rec in caplog.records)

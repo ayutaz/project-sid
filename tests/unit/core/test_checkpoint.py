@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -498,3 +500,89 @@ class TestCheckpointPathTraversal:
             # list_checkpoints should also work
             checkpoints = manager.list_checkpoints(valid_id)
             assert len(checkpoints) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Restore Order Correctness
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointRestoreOrder:
+    """Tests for correct restore ordering of list-based SAS sections."""
+
+    async def test_restore_action_history_preserves_order(self, tmp_path: Path):
+        """Restored action history should maintain correct newest-first order."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        # Add actions in order (oldest to newest)
+        for i in range(5):
+            await sas.add_action(ActionHistoryEntry(action=f"action-{i}"))
+
+        # Save checkpoint
+        await manager.save("agent-001", sas, tick_count=10)
+
+        # Restore to a new SAS
+        sas_restored = InMemorySAS("agent-001")
+        await manager.restore("agent-001", sas_restored)
+
+        # Get action history and verify order (newest first)
+        actions = await sas_restored.get_action_history()
+        assert len(actions) == 5
+        assert actions[0].action == "action-4"  # newest
+        assert actions[-1].action == "action-0"  # oldest
+
+    async def test_restore_stm_preserves_order(self, tmp_path: Path):
+        """Restored STM should maintain correct newest-first order."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        # Add STM entries in order (oldest to newest)
+        for i in range(5):
+            await sas.add_stm(MemoryEntry(content=f"memory-{i}"))
+
+        # Save checkpoint
+        await manager.save("agent-001", sas, tick_count=10)
+
+        # Restore to a new SAS
+        sas_restored = InMemorySAS("agent-001")
+        await manager.restore("agent-001", sas_restored)
+
+        # Get STM and verify order (newest first)
+        stm = await sas_restored.get_stm()
+        assert len(stm) == 5
+        assert stm[0].content == "memory-4"  # newest
+        assert stm[-1].content == "memory-0"  # oldest
+
+
+# ---------------------------------------------------------------------------
+# Async File I/O
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpointAsyncIO:
+    """Tests for async file I/O using asyncio.to_thread."""
+
+    async def test_save_uses_async_io(self, tmp_path: Path):
+        """save should use asyncio.to_thread for file writing."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+
+        target = "piano.core.checkpoint.asyncio.to_thread"
+        with patch(target, wraps=asyncio.to_thread) as mock_fn:
+            await manager.save("agent-001", sas, tick_count=10)
+            # Should have been called for write_text
+            assert mock_fn.call_count >= 1
+
+    async def test_restore_uses_async_io(self, tmp_path: Path):
+        """restore should use asyncio.to_thread for file reading."""
+        manager = CheckpointManager(checkpoint_dir=tmp_path)
+        sas = InMemorySAS("agent-001")
+        await manager.save("agent-001", sas, tick_count=10)
+
+        sas_restored = InMemorySAS("agent-001")
+        target = "piano.core.checkpoint.asyncio.to_thread"
+        with patch(target, wraps=asyncio.to_thread) as mock_fn:
+            await manager.restore("agent-001", sas_restored)
+            # Should have been called for read_text
+            assert mock_fn.call_count >= 1

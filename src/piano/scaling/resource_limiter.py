@@ -97,9 +97,9 @@ class BackpressurePolicy:
         """Return ``True`` if the agent's usage exceeds the warning threshold."""
         llm_over = (
             max_concurrent_llm > 0
-            and usage.concurrent_llm >= max_concurrent_llm * self.warning_threshold
+            and usage.concurrent_llm > max_concurrent_llm * self.warning_threshold
         )
-        mem_over = max_memory_mb > 0 and usage.memory_mb >= max_memory_mb * self.warning_threshold
+        mem_over = max_memory_mb > 0 and usage.memory_mb > max_memory_mb * self.warning_threshold
         return llm_over or mem_over
 
     def should_throttle(
@@ -112,9 +112,9 @@ class BackpressurePolicy:
         """Return ``True`` if the agent's usage exceeds the throttle threshold."""
         llm_over = (
             max_concurrent_llm > 0
-            and usage.concurrent_llm >= max_concurrent_llm * self.throttle_threshold
+            and usage.concurrent_llm > max_concurrent_llm * self.throttle_threshold
         )
-        mem_over = max_memory_mb > 0 and usage.memory_mb >= max_memory_mb * self.throttle_threshold
+        mem_over = max_memory_mb > 0 and usage.memory_mb > max_memory_mb * self.throttle_threshold
         return llm_over or mem_over
 
 
@@ -188,6 +188,9 @@ class ResourceLimiter:
     async def acquire(self, agent_id: str, resource_type: str) -> bool:
         """Attempt to acquire a resource slot.
 
+        The entire check-and-acquire sequence is protected by a single lock
+        to prevent race conditions between concurrent callers.
+
         Args:
             agent_id: The agent requesting the resource.
             resource_type: ``"llm"`` or ``"memory"``.
@@ -199,58 +202,59 @@ class ResourceLimiter:
         state = await self._get_agent_state(agent_id)
 
         if resource_type == ResourceType.LLM:
-            # Check throttle status first
-            usage = self._build_usage(agent_id, state)
-            throttled = self.policy.should_throttle(
-                usage,
-                max_concurrent_llm=self.max_concurrent_llm_per_agent,
-                max_memory_mb=self.max_memory_per_agent_mb,
-            )
-            if throttled:
-                state.throttled = True
-                logger.warning(
-                    "resource_limiter.throttled",
+            async with self._lock:
+                # Check throttle status first
+                usage = self._build_usage(agent_id, state)
+                throttled = self.policy.should_throttle(
+                    usage,
+                    max_concurrent_llm=self.max_concurrent_llm_per_agent,
+                    max_memory_mb=self.max_memory_per_agent_mb,
+                )
+                if throttled:
+                    state.throttled = True
+                    logger.warning(
+                        "resource_limiter.throttled",
+                        agent_id=agent_id,
+                        concurrent_llm=state.llm_in_use,
+                    )
+                    return False
+
+                # Try agent-level semaphore (non-blocking)
+                if state.llm_available <= 0:
+                    logger.debug(
+                        "resource_limiter.agent_limit_reached",
+                        agent_id=agent_id,
+                        in_use=state.llm_in_use,
+                    )
+                    return False
+
+                # Try worker-level semaphore (non-blocking)
+                if self._worker_llm_available <= 0:
+                    logger.debug(
+                        "resource_limiter.worker_limit_reached",
+                        worker_llm_in_use=self._worker_llm_in_use,
+                    )
+                    return False
+
+                # Acquire both semaphores atomically with counter updates
+                await state.llm_semaphore.acquire()
+                state.llm_available -= 1
+                await self._worker_semaphore.acquire()
+                self._worker_llm_available -= 1
+                state.llm_in_use += 1
+                self._worker_llm_in_use += 1
+
+                # Update throttle status after acquiring
+                state.throttled = False
+                self._check_and_log_warning(agent_id, state)
+
+                logger.debug(
+                    "resource_limiter.acquired",
                     agent_id=agent_id,
+                    resource_type=resource_type,
                     concurrent_llm=state.llm_in_use,
                 )
-                return False
-
-            # Try agent-level semaphore (non-blocking)
-            if state.llm_available <= 0:
-                logger.debug(
-                    "resource_limiter.agent_limit_reached",
-                    agent_id=agent_id,
-                    in_use=state.llm_in_use,
-                )
-                return False
-
-            # Try worker-level semaphore (non-blocking)
-            if self._worker_llm_available <= 0:
-                logger.debug(
-                    "resource_limiter.worker_limit_reached",
-                    worker_llm_in_use=self._worker_llm_in_use,
-                )
-                return False
-
-            # Acquire both semaphores
-            await state.llm_semaphore.acquire()
-            state.llm_available -= 1
-            await self._worker_semaphore.acquire()
-            self._worker_llm_available -= 1
-            state.llm_in_use += 1
-            self._worker_llm_in_use += 1
-
-            # Update throttle status after acquiring
-            state.throttled = False
-            self._check_and_log_warning(agent_id, state)
-
-            logger.debug(
-                "resource_limiter.acquired",
-                agent_id=agent_id,
-                resource_type=resource_type,
-                concurrent_llm=state.llm_in_use,
-            )
-            return True
+                return True
 
         if resource_type == ResourceType.MEMORY:
             # Memory is tracked but not semaphore-gated; see set_memory_usage
@@ -277,34 +281,35 @@ class ResourceLimiter:
         state = await self._get_agent_state(agent_id)
 
         if resource_type == ResourceType.LLM:
-            if state.llm_in_use <= 0:
-                logger.warning(
-                    "resource_limiter.release_without_acquire",
-                    agent_id=agent_id,
+            async with self._lock:
+                if state.llm_in_use <= 0:
+                    logger.warning(
+                        "resource_limiter.release_without_acquire",
+                        agent_id=agent_id,
+                    )
+                    return
+
+                state.llm_in_use -= 1
+                self._worker_llm_in_use = max(0, self._worker_llm_in_use - 1)
+                state.llm_semaphore.release()
+                state.llm_available += 1
+                self._worker_semaphore.release()
+                self._worker_llm_available += 1
+
+                # Re-evaluate throttle status
+                usage = self._build_usage(agent_id, state)
+                state.throttled = self.policy.should_throttle(
+                    usage,
+                    max_concurrent_llm=self.max_concurrent_llm_per_agent,
+                    max_memory_mb=self.max_memory_per_agent_mb,
                 )
-                return
 
-            state.llm_in_use -= 1
-            self._worker_llm_in_use = max(0, self._worker_llm_in_use - 1)
-            state.llm_semaphore.release()
-            state.llm_available += 1
-            self._worker_semaphore.release()
-            self._worker_llm_available += 1
-
-            # Re-evaluate throttle status
-            usage = self._build_usage(agent_id, state)
-            state.throttled = self.policy.should_throttle(
-                usage,
-                max_concurrent_llm=self.max_concurrent_llm_per_agent,
-                max_memory_mb=self.max_memory_per_agent_mb,
-            )
-
-            logger.debug(
-                "resource_limiter.released",
-                agent_id=agent_id,
-                resource_type=resource_type,
-                concurrent_llm=state.llm_in_use,
-            )
+                logger.debug(
+                    "resource_limiter.released",
+                    agent_id=agent_id,
+                    resource_type=resource_type,
+                    concurrent_llm=state.llm_in_use,
+                )
         elif resource_type == ResourceType.MEMORY:
             # Memory release is handled via set_memory_usage
             pass
@@ -353,6 +358,25 @@ class ResourceLimiter:
         if state is None:
             return ResourceUsage(agent_id=agent_id)
         return self._build_usage(agent_id, state)
+
+    async def deregister_agent(self, agent_id: str) -> None:
+        """Remove all tracking state for an agent.
+
+        Any in-use LLM slots are released back to the worker pool.
+
+        Args:
+            agent_id: The agent to deregister.
+        """
+        async with self._lock:
+            state = self._agents.pop(agent_id, None)
+            if state is None:
+                return
+            # Release any in-use worker slots
+            for _ in range(state.llm_in_use):
+                self._worker_llm_in_use = max(0, self._worker_llm_in_use - 1)
+                self._worker_semaphore.release()
+                self._worker_llm_available += 1
+            logger.debug("resource_limiter.agent_deregistered", agent_id=agent_id)
 
     def is_throttled(self, agent_id: str) -> bool:
         """Return whether the agent is currently throttled.

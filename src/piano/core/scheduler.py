@@ -259,10 +259,13 @@ class ModuleScheduler:
     async def _tick_loop(self, sas: Any) -> None:
         """Main tick loop. Runs until cancelled or stopped."""
         try:
-            while self._state == SchedulerState.RUNNING or self._state == SchedulerState.PAUSED:
+            while self._state in (SchedulerState.RUNNING, SchedulerState.PAUSED):
                 if self._state == SchedulerState.PAUSED:
                     await asyncio.sleep(self._tick_interval)
                     continue
+
+                if self._state != SchedulerState.RUNNING:
+                    break
 
                 self._tick_count += 1
                 await self._execute_tick(sas)

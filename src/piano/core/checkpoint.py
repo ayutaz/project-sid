@@ -11,6 +11,7 @@ from __future__ import annotations
 
 __all__ = ["Checkpoint", "CheckpointManager", "CheckpointMetadata"]
 
+import asyncio
 import json
 import re
 from datetime import UTC, datetime
@@ -133,6 +134,7 @@ class CheckpointManager:
         agent_dir = self.checkpoint_dir / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
         # Use ISO format timestamp for filename (replace colons for Windows compatibility)
+        # isoformat() includes microseconds from datetime.now(UTC) for uniqueness
         timestamp_str = metadata.timestamp.isoformat().replace(":", "-")
         return agent_dir / f"{timestamp_str}.json"
 
@@ -172,9 +174,9 @@ class CheckpointManager:
         metadata.size_bytes = len(checkpoint_json.encode("utf-8"))
         checkpoint.metadata.size_bytes = metadata.size_bytes
 
-        # Write to disk
+        # Write to disk (offload blocking I/O to thread)
         checkpoint_path = self.get_checkpoint_path(agent_id, metadata)
-        checkpoint_path.write_text(checkpoint_json, encoding="utf-8")
+        await asyncio.to_thread(checkpoint_path.write_text, checkpoint_json, encoding="utf-8")
 
         self.logger.info(
             "checkpoint_saved",
@@ -236,9 +238,9 @@ class CheckpointManager:
                 raise ValueError(msg)
             metadata = matching[0]
 
-        # Read checkpoint from disk
+        # Read checkpoint from disk (offload blocking I/O to thread)
         checkpoint_path = self.get_checkpoint_path(agent_id, metadata)
-        checkpoint_json = checkpoint_path.read_text(encoding="utf-8")
+        checkpoint_json = await asyncio.to_thread(checkpoint_path.read_text, encoding="utf-8")
         checkpoint_data = json.loads(checkpoint_json)
         checkpoint = Checkpoint.model_validate(checkpoint_data)
 
@@ -269,8 +271,9 @@ class CheckpointManager:
             elif section_name == "self_reflection":
                 await sas.update_self_reflection(SelfReflectionData.model_validate(section_data))
             elif section_name == "action_history":
-                # Restore action history entries
-                for entry_dict in section_data:
+                # Restore action history entries in reverse order so that
+                # the newest entry ends up at the head after lpush operations
+                for entry_dict in reversed(section_data):
                     entry = ActionHistoryEntry.model_validate(entry_dict)
                     await sas.add_action(entry)
             elif section_name == "working_memory":
@@ -278,8 +281,9 @@ class CheckpointManager:
                 entries = [MemoryEntry.model_validate(e) for e in section_data]
                 await sas.set_working_memory(entries)
             elif section_name == "stm":
-                # Restore STM entries
-                for entry_dict in section_data:
+                # Restore STM entries in reverse order so that
+                # the newest entry ends up at the head after lpush operations
+                for entry_dict in reversed(section_data):
                     entry = MemoryEntry.model_validate(entry_dict)
                     await sas.add_stm(entry)
             elif section_name == "cc_decision":

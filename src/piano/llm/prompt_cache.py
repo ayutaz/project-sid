@@ -227,6 +227,8 @@ class PrefixCacheOptimizer:
     and user prompts, and normalizes whitespace for consistent hashing.
     """
 
+    _MAX_PREFIX_HASHES = 1000
+
     def __init__(self) -> None:
         """Initialize the prefix cache optimizer."""
         self._prefix_hashes: dict[str, str] = {}
@@ -277,6 +279,13 @@ class PrefixCacheOptimizer:
         # Track the system prompt prefix hash for analysis
         if normalized_system:
             prefix_hash = self.compute_prefix_hash(normalized_system)
+            # Evict oldest entries when exceeding max size
+            if (
+                prefix_hash not in self._prefix_hashes
+                and len(self._prefix_hashes) >= self._MAX_PREFIX_HASHES
+            ):
+                oldest_key = next(iter(self._prefix_hashes))
+                del self._prefix_hashes[oldest_key]
             self._prefix_hashes[prefix_hash] = normalized_system
 
         optimized = request.model_copy(

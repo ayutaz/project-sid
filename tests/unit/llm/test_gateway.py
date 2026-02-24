@@ -19,6 +19,7 @@ from piano.llm.gateway import (
     QueuedRequest,
     RequestPriority,
 )
+from piano.llm.provider import RateLimitExceededError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -306,8 +307,8 @@ class TestRateLimiting:
             for i in range(5):
                 await gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}")
 
-            # Next request should fail
-            with pytest.raises(Exception, match="Global rate limit exceeded"):
+            # Next request should fail with typed exception
+            with pytest.raises(RateLimitExceededError, match="Global rate limit exceeded"):
                 await gw.submit(LLMRequest(prompt="test"), agent_id="agent-6")
 
         finally:
@@ -322,8 +323,8 @@ class TestRateLimiting:
             # First request from agent-1 should succeed
             await gw.submit(LLMRequest(prompt="test 1"), agent_id="agent-1")
 
-            # Second request from same agent should fail (exceeds 20% of 5 = 1)
-            with pytest.raises(Exception, match="Per-agent rate limit exceeded"):
+            # Second request from same agent should fail with typed exception
+            with pytest.raises(RateLimitExceededError, match="Per-agent rate limit exceeded"):
                 await gw.submit(LLMRequest(prompt="test 2"), agent_id="agent-1")
 
         finally:
@@ -748,3 +749,76 @@ class TestStructlogIntegration:
             await gw.stop()
 
         assert any(log.get("event") == "gateway_stopped" for log in cap_logs)
+
+
+# ---------------------------------------------------------------------------
+# Concurrent processing tests
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentProcessing:
+    """Tests that gateway processes requests concurrently, not serially."""
+
+    async def test_requests_processed_concurrently(self, mock_provider: AsyncMock) -> None:
+        """Requests should be processed concurrently up to max_concurrent, not one at a time."""
+        max_concurrent_seen = 0
+        concurrent_count = 0
+        lock = asyncio.Lock()
+
+        async def track_concurrent(request: LLMRequest) -> LLMResponse:
+            nonlocal concurrent_count, max_concurrent_seen
+            async with lock:
+                concurrent_count += 1
+                max_concurrent_seen = max(max_concurrent_seen, concurrent_count)
+            await asyncio.sleep(0.1)
+            async with lock:
+                concurrent_count -= 1
+            return LLMResponse(content="ok", model="mock", latency_ms=10.0, cost_usd=0.001)
+
+        mock_provider.complete = track_concurrent
+
+        gw = LLMGateway(mock_provider, max_concurrent=5, requests_per_minute=100)
+        await gw.start()
+
+        try:
+            tasks = [
+                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}")
+                for i in range(5)
+            ]
+            await asyncio.gather(*tasks)
+
+            # With concurrent processing, we should see more than 1 concurrent request
+            assert max_concurrent_seen > 1
+        finally:
+            await gw.stop()
+
+
+# ---------------------------------------------------------------------------
+# Dedup key tests
+# ---------------------------------------------------------------------------
+
+
+class TestDedupKey:
+    """Tests for deduplication key including all relevant fields."""
+
+    def test_dedup_key_includes_max_tokens(self) -> None:
+        """Different max_tokens should produce different dedup keys."""
+        req1 = LLMRequest(prompt="test", max_tokens=100)
+        req2 = LLMRequest(prompt="test", max_tokens=200)
+        key1 = LLMGateway._make_dedup_key(req1)
+        key2 = LLMGateway._make_dedup_key(req2)
+        assert key1 != key2
+
+    def test_dedup_key_includes_json_mode(self) -> None:
+        """Different json_mode should produce different dedup keys."""
+        req1 = LLMRequest(prompt="test", json_mode=False)
+        req2 = LLMRequest(prompt="test", json_mode=True)
+        key1 = LLMGateway._make_dedup_key(req1)
+        key2 = LLMGateway._make_dedup_key(req2)
+        assert key1 != key2
+
+    def test_dedup_key_same_for_identical_requests(self) -> None:
+        """Identical requests should produce the same dedup key."""
+        req1 = LLMRequest(prompt="test", max_tokens=100, json_mode=True)
+        req2 = LLMRequest(prompt="test", max_tokens=100, json_mode=True)
+        assert LLMGateway._make_dedup_key(req1) == LLMGateway._make_dedup_key(req2)

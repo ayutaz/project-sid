@@ -193,3 +193,34 @@ class TestSTMSAS:
         await stm.sync_to_sas()
         await stm.sync_from_sas()
         assert stm.size == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_to_sas_no_duplicates(self) -> None:
+        """Repeated sync_to_sas should not duplicate entries in SAS."""
+        sas = InMemorySAS()
+        stm = ShortTermMemory()
+        stm.bind_sas(sas)
+        stm.add(_entry("a"))
+        stm.add(_entry("b"))
+
+        # Sync twice
+        await stm.sync_to_sas()
+        await stm.sync_to_sas()
+
+        stored = await sas.get_stm()
+        assert len(stored) == 2  # Not 4
+
+    @pytest.mark.asyncio
+    async def test_sync_to_sas_incremental(self) -> None:
+        """New entries added after first sync should be synced on second call."""
+        sas = InMemorySAS()
+        stm = ShortTermMemory()
+        stm.bind_sas(sas)
+        stm.add(_entry("a"))
+        await stm.sync_to_sas()
+
+        stm.add(_entry("b"))
+        await stm.sync_to_sas()
+
+        stored = await sas.get_stm()
+        assert len(stored) == 2

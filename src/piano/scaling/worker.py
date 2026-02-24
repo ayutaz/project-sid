@@ -97,19 +97,26 @@ class AgentWorkerProcess:
         self,
         worker_id: str,
         max_agents: int = 250,
+        stuck_threshold_seconds: float = 30.0,
     ) -> None:
         """Initialize the worker process.
 
         Args:
             worker_id: Unique identifier for this worker.
             max_agents: Maximum number of agents this worker can manage.
+            stuck_threshold_seconds: If an agent's tick count hasn't changed
+                in this many seconds, it is considered stuck/unhealthy.
         """
         self._worker_id = worker_id
         self._max_agents = max_agents
+        self._stuck_threshold = stuck_threshold_seconds
         self._status = WorkerStatus.IDLE
         self._agents: dict[str, Agent] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._start_time: float | None = None
+        self._stop_lock = asyncio.Lock()
+        # Tick progress tracking for stuck detection: agent_id -> (tick_count, timestamp)
+        self._last_tick_progress: dict[str, tuple[int, float]] = {}
 
     # --- Properties ---
 
@@ -159,9 +166,7 @@ class AgentWorkerProcess:
             )
 
         if self.is_full:
-            raise ValueError(
-                f"Worker '{self._worker_id}' is at capacity ({self._max_agents})"
-            )
+            raise ValueError(f"Worker '{self._worker_id}' is at capacity ({self._max_agents})")
 
         if agent.agent_id in self._agents:
             raise ValueError(
@@ -197,9 +202,7 @@ class AgentWorkerProcess:
             KeyError: If no agent with the given ID exists.
         """
         if agent_id not in self._agents:
-            raise KeyError(
-                f"Agent '{agent_id}' not found in worker '{self._worker_id}'"
-            )
+            raise KeyError(f"Agent '{agent_id}' not found in worker '{self._worker_id}'")
 
         # Cancel the task if it exists and is still running
         task = self._tasks.pop(agent_id, None)
@@ -268,11 +271,13 @@ class AgentWorkerProcess:
         )
 
         # Initialize all agents concurrently
+        agent_list = list(self._agents.values())
         init_results = await asyncio.gather(
-            *[agent.initialize() for agent in self._agents.values()],
+            *[agent.initialize() for agent in agent_list],
             return_exceptions=True,
         )
-        for agent, result in zip(self._agents.values(), init_results, strict=True):
+        failed_ids: list[str] = []
+        for agent, result in zip(agent_list, init_results, strict=True):
             if isinstance(result, BaseException):
                 logger.error(
                     "worker_agent_init_error",
@@ -280,8 +285,13 @@ class AgentWorkerProcess:
                     agent=agent.agent_id,
                     error=str(result),
                 )
+                failed_ids.append(agent.agent_id)
 
-        # Create tasks for all agents
+        # Remove agents that failed initialization
+        for agent_id in failed_ids:
+            self._agents.pop(agent_id, None)
+
+        # Create tasks only for successfully initialized agents
         for agent in self._agents.values():
             self._tasks[agent.agent_id] = asyncio.create_task(
                 self._run_agent(agent),
@@ -300,53 +310,57 @@ class AgentWorkerProcess:
         """Gracefully stop all agents and the worker.
 
         Cancels all agent tasks and shuts down each agent.
+        Uses a lock to prevent concurrent stop calls.
 
         Raises:
             RuntimeError: If the worker is not running.
         """
-        if self._status not in (WorkerStatus.RUNNING, WorkerStatus.STARTING):
-            raise RuntimeError(
-                f"Cannot stop worker '{self._worker_id}' in state {self._status.value}"
-            )
-
-        self._status = WorkerStatus.STOPPING
-
-        logger.info(
-            "worker_stopping",
-            worker=self._worker_id,
-            agent_count=len(self._agents),
-        )
-
-        # Cancel all agent tasks
-        for task in self._tasks.values():
-            if not task.done():
-                task.cancel()
-
-        # Wait for all tasks to complete
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-
-        # Shut down all agents
-        shutdown_results = await asyncio.gather(
-            *[agent.shutdown() for agent in self._agents.values()],
-            return_exceptions=True,
-        )
-        for agent, result in zip(self._agents.values(), shutdown_results, strict=True):
-            if isinstance(result, BaseException):
-                logger.error(
-                    "worker_agent_shutdown_error",
-                    worker=self._worker_id,
-                    agent=agent.agent_id,
-                    error=str(result),
+        async with self._stop_lock:
+            if self._status not in (WorkerStatus.RUNNING, WorkerStatus.STARTING):
+                raise RuntimeError(
+                    f"Cannot stop worker '{self._worker_id}' in state {self._status.value}"
                 )
 
-        self._tasks.clear()
-        self._status = WorkerStatus.STOPPED
+            self._status = WorkerStatus.STOPPING
 
-        logger.info(
-            "worker_stopped",
-            worker=self._worker_id,
-        )
+            logger.info(
+                "worker_stopping",
+                worker=self._worker_id,
+                agent_count=len(self._agents),
+            )
+
+            # Cancel all agent tasks
+            for task in self._tasks.values():
+                if not task.done():
+                    task.cancel()
+
+            # Wait for all tasks to complete
+            if self._tasks:
+                await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+
+            # Shut down all agents
+            shutdown_results = await asyncio.gather(
+                *[agent.shutdown() for agent in self._agents.values()],
+                return_exceptions=True,
+            )
+            for agent, result in zip(self._agents.values(), shutdown_results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "worker_agent_shutdown_error",
+                        worker=self._worker_id,
+                        agent=agent.agent_id,
+                        error=str(result),
+                    )
+
+            self._tasks.clear()
+            self._start_time = None
+            self._last_tick_progress.clear()
+            self._status = WorkerStatus.STOPPED
+
+            logger.info(
+                "worker_stopped",
+                worker=self._worker_id,
+            )
 
     # --- Statistics and Health ---
 
@@ -376,12 +390,16 @@ class AgentWorkerProcess:
     async def health_check(self) -> dict[str, Any]:
         """Check the health of all agents.
 
+        Includes stuck agent detection: if an agent's tick count hasn't
+        changed in ``stuck_threshold_seconds``, it is marked as stuck.
+
         Returns:
             Dictionary with overall worker health and per-agent status:
             ``{"healthy": bool, "worker_status": str, "agents": {id: AgentHealthInfo}}``.
         """
         agents_health: dict[str, dict[str, Any]] = {}
         all_healthy = True
+        now = time.monotonic()
 
         for agent_id, agent in self._agents.items():
             task = self._tasks.get(agent_id)
@@ -401,11 +419,30 @@ class AgentWorkerProcess:
             if self._status == WorkerStatus.RUNNING and task_done:
                 all_healthy = False
 
+            # Stuck detection: check tick progress
+            current_tick = agent.scheduler.tick_count
+            prev = self._last_tick_progress.get(agent_id)
+            if prev is not None:
+                prev_tick, prev_time = prev
+                if current_tick == prev_tick and (now - prev_time) >= self._stuck_threshold:
+                    if self._status == WorkerStatus.RUNNING and not task_done:
+                        error = (
+                            f"Agent stuck: tick count {current_tick} "
+                            f"unchanged for {now - prev_time:.1f}s"
+                        )
+                        all_healthy = False
+                elif current_tick != prev_tick:
+                    # Tick advanced: update the baseline
+                    self._last_tick_progress[agent_id] = (current_tick, now)
+            else:
+                # First health check for this agent: record baseline
+                self._last_tick_progress[agent_id] = (current_tick, now)
+
             info = AgentHealthInfo(
                 agent_id=agent_id,
                 running=agent.running,
                 task_done=task_done,
-                tick_count=agent.scheduler.tick_count,
+                tick_count=current_tick,
                 error=error,
             )
             agents_health[agent_id] = info.model_dump()

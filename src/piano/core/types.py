@@ -20,7 +20,7 @@ __all__ = [
     "SocialData",
 ]
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
@@ -51,7 +51,7 @@ class ModuleResult(BaseModel):
 
     module_name: str
     tier: ModuleTier
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 
@@ -67,7 +67,7 @@ class CCDecision(BaseModel):
     """Decision made by the Cognitive Controller after information bottleneck + ignition."""
 
     cycle_id: UUID = Field(default_factory=uuid4)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     summary: str = ""  # compressed information summary
     action: str = ""  # decided action (e.g., "mine", "talk", "idle")
     action_params: dict[str, Any] = Field(default_factory=dict)
@@ -122,7 +122,7 @@ class PlanData(BaseModel):
 class ActionHistoryEntry(BaseModel):
     """A single action history entry."""
 
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     action: str = ""
     expected_result: str = ""
     actual_result: str = ""
@@ -144,7 +144,7 @@ class MemoryEntry(BaseModel):
     """A single memory entry (used for both WM and STM)."""
 
     id: UUID = Field(default_factory=uuid4)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     content: str = ""
     category: str = ""  # "perception", "action", "social", "reflection"
     importance: float = 0.5  # 0.0 - 1.0
@@ -196,4 +196,4 @@ class BridgeEvent(BaseModel):
 
     event_type: str  # "perception", "chat", "error", "action_complete"
     data: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

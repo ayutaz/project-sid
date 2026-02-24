@@ -9,6 +9,7 @@ Reference: docs/implementation/03-cognitive-controller.md
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -30,26 +31,13 @@ logger = logging.getLogger(__name__)
 # -- Valid actions for CC decision validation -----------------------------
 
 VALID_ACTIONS: frozenset[str] = frozenset({
-    "move",
-    "mine",
-    "craft",
-    "chat",
-    "look",
-    "get_position",
-    "get_inventory",
-    "idle",
-    "wait",
-    "explore",
-    "attack",
-    "dig",
-    "place",
-    "equip",
-    "use",
-    "drop",
-    "follow",
-    "flee",
-    "build",
-    "gather",
+    "mine", "move", "chat", "look", "craft", "build", "explore",
+    "get_position", "get_inventory", "idle", "wait",
+    "attack", "flee", "defend",
+    "place", "equip", "use", "drop", "eat",
+    "trade", "gift", "follow", "vote",
+    "think", "observe",
+    "dig", "gather",
 })
 
 
@@ -60,8 +48,12 @@ You are the Cognitive Controller of an AI agent in a Minecraft world.
 Your role is to integrate the current situation and decide what the
 agent should do next.
 
+Valid actions: mine, move, chat, look, craft, build, explore, \
+get_position, get_inventory, idle, wait, attack, flee, defend, \
+place, equip, use, drop, eat, trade, gift, follow, vote, think, observe.
+
 Respond in JSON with the following keys:
-- "action": short verb describing the next action (e.g. "mine", "talk", "explore", "idle")
+- "action": short verb describing the next action (e.g. "mine", "chat", "explore", "idle")
 - "action_params": object with optional parameters for the action
 - "speaking": string with what the agent should say, or null if silent
 - "reasoning": one-sentence rationale for your decision
@@ -135,14 +127,14 @@ class CognitiveController(Module):
             llm_response = await self._call_llm(compression)
         except Exception as exc:
             logger.warning("LLM call failed (cycle %d): %s", self._cycle_count, exc)
-            return self._fallback_result(str(exc), sas)
+            return await self._fallback_result(str(exc), sas)
 
         # 4. Parse response
         try:
             decision = self._parse_response(llm_response, compression)
         except Exception as exc:
             logger.warning("Parse failed (cycle %d): %s", self._cycle_count, exc)
-            return self._fallback_result(f"parse error: {exc}", sas)
+            return await self._fallback_result(f"parse error: {exc}", sas)
 
         # 5. Store & broadcast
         self._last_decision = decision
@@ -182,7 +174,7 @@ class CognitiveController(Module):
             max_tokens=self._max_tokens,
             json_mode=True,
         )
-        return await self._llm.complete(request)
+        return await asyncio.wait_for(self._llm.complete(request), timeout=30.0)
 
     def _parse_response(
         self,
@@ -191,20 +183,23 @@ class CognitiveController(Module):
     ) -> CCDecision:
         """Parse LLM JSON response into a CCDecision with validation."""
         raw = response.content.strip()
-        data: dict[str, Any] = json.loads(raw)
+        try:
+            data: dict[str, Any] = json.loads(raw)
+        except json.JSONDecodeError:
+            # Try to extract a JSON object from the raw text
+            data = self._extract_json_fields(raw)
+            if not data:
+                raise
 
         # Validate action field
         action = data.get("action", "idle")
         if action not in VALID_ACTIONS:
             logger.warning(
                 "Invalid action '%s' not in VALID_ACTIONS (cycle %d), "
-                "falling back to previous or idle",
+                "falling back to idle",
                 action,
                 self._cycle_count,
             )
-            # Fall back to previous decision's action if available, otherwise idle
-            if self._last_decision is not None:
-                raise ValueError(f"Invalid action: {action}")
             action = "idle"
 
         # Validate action_params is a dict
@@ -229,9 +224,32 @@ class CognitiveController(Module):
             raw_llm_response=raw,
         )
 
-    def _fallback_result(self, error_msg: str, sas: SharedAgentState) -> ModuleResult:
-        """Return a fallback result reusing the previous decision."""
+    @staticmethod
+    def _extract_json_fields(raw: str) -> dict[str, Any]:
+        """Try to extract a JSON object from malformed LLM output.
+
+        Looks for a JSON substring enclosed in braces within the raw text.
+        Returns an empty dict if extraction fails.
+        """
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+        return {}
+
+    async def _fallback_result(self, error_msg: str, sas: SharedAgentState) -> ModuleResult:
+        """Return a fallback result reusing the previous decision and broadcast it."""
         if self._last_decision is not None:
+            # Broadcast the fallback decision so output modules still receive it
+            if self._broadcast.listener_names:
+                try:
+                    await self._broadcast.broadcast(self._last_decision)
+                except Exception as exc:
+                    logger.warning("Fallback broadcast failed: %s", exc)
+
             return ModuleResult(
                 module_name=self.name,
                 tier=self.tier,

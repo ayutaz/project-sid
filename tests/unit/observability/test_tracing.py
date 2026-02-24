@@ -67,6 +67,18 @@ class TestSpanEvent:
         event = SpanEvent(name="log", attributes={"message": "hello"})
         assert event.attributes["message"] == "hello"
 
+    def test_timestamp_is_wall_clock(self) -> None:
+        """SpanEvent.timestamp should be a wall-clock (epoch) time, not monotonic."""
+        before = time.time()
+        event = SpanEvent(name="test")
+        after = time.time()
+        # Wall-clock timestamps are large epoch values (> 1e9).
+        # Monotonic values are typically small (seconds since boot).
+        assert event.timestamp >= before
+        assert event.timestamp <= after
+        # Sanity: epoch timestamps are > 1 billion
+        assert event.timestamp > 1_000_000_000
+
 
 # ---------------------------------------------------------------------------
 # Span tests

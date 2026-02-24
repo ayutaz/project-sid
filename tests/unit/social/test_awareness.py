@@ -656,3 +656,44 @@ async def test_chat_special_tokens_removed(
     call_args = mock_llm.complete.call_args
     prompt = call_args[0][0].prompt
     assert "<|endoftext|>" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Sentiment Clamping Tests
+# ---------------------------------------------------------------------------
+
+
+async def test_sentiment_clamping_to_valid_range(
+    social_module: SocialAwarenessModule,
+    sas: InMemorySAS,
+    mock_llm: AsyncMock,
+) -> None:
+    """Blended sentiment is clamped to [-1.0, 1.0] range."""
+    # Set up existing high sentiment
+    social = await sas.get_social()
+    social.relationships["player1"] = 0.9
+    await sas.update_social(social)
+
+    # Set up trigger
+    percepts = await sas.get_percepts()
+    percepts.nearby_players = ["player1"]
+    await sas.update_percepts(percepts)
+
+    # New sentiment at maximum
+    mock_llm.complete.return_value = LLMResponse(
+        content=json.dumps(
+            {
+                "sentiment_updates": {"player1": 1.0},
+                "inferred_intents": {},
+                "social_signals": [],
+                "interaction_strategy": "",
+            }
+        ),
+        model="gpt-4o-mini",
+    )
+
+    await social_module.tick(sas)
+
+    social = await sas.get_social()
+    # 0.6 * 1.0 + 0.4 * 0.9 = 0.96 -- should still be <= 1.0
+    assert -1.0 <= social.relationships["player1"] <= 1.0

@@ -13,7 +13,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
-from scipy import stats
+
+try:
+    from scipy import stats as _scipy_stats
+
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
 
 
 class SentimentPrediction(BaseModel):
@@ -60,9 +66,11 @@ class SocialCognitionMetrics:
         predicted_values = [p.predicted for p in predictions]
         actual_values = [p.actual for p in predictions]
 
-        # scipy.stats.pearsonr returns (correlation, p_value)
-        r, _ = stats.pearsonr(predicted_values, actual_values)
-        return float(r)
+        if _HAS_SCIPY:
+            r, _ = _scipy_stats.pearsonr(predicted_values, actual_values)
+            return float(r)
+
+        return _manual_pearson(predicted_values, actual_values)
 
     @staticmethod
     def observer_threshold_analysis(
@@ -330,6 +338,26 @@ def generate_report(
         timestamp=datetime.now(UTC),
         metadata=extended_metadata,
     )
+
+
+def _manual_pearson(xs: list[float], ys: list[float]) -> float:
+    """Compute Pearson r without scipy, returning 0.0 on degenerate input."""
+    n = len(xs)
+    if n < 2 or n != len(ys):
+        return 0.0
+
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+
+    denom = (var_x * var_y) ** 0.5
+    if denom == 0.0:
+        return 0.0
+
+    return cov / denom
 
 
 __all__ = [

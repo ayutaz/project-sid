@@ -477,3 +477,28 @@ class TestSocialGraph:
         rel = graph.get_relationship("agent-1", "agent-3")
         assert rel is not None
         assert rel.trust == 0.0  # Clamped at minimum
+
+    def test_pagerank_cache_reuses_result(self):
+        """Test that PageRank is cached and reused when graph is unchanged."""
+        graph = SocialGraph()
+        for i in range(3):
+            graph.update_relationship(f"agent-{i}", "hub", affinity_delta=0.8)
+
+        # First call computes and caches
+        score1 = graph.get_influence_score("hub")
+        assert graph._pagerank_cache is not None
+        assert graph._pagerank_dirty is False
+
+        # Second call should use cache (same result)
+        score2 = graph.get_influence_score("hub")
+        assert score1 == score2
+
+        # Mutation invalidates cache
+        graph.update_relationship("agent-99", "hub", affinity_delta=0.5)
+        assert graph._pagerank_dirty is True
+
+        # Next call recomputes
+        score3 = graph.get_influence_score("hub")
+        assert graph._pagerank_dirty is False
+        # Score may differ slightly due to new edge
+        assert score3 > 0.0

@@ -275,9 +275,10 @@ class InfluencerModel:
                 affinity_normalized = (relation.affinity + 1.0) / 2.0
                 edge_weight = affinity_normalized * relation.trust
 
-                # Distance decay: exponential decay per hop
+                # Per-hop decay: apply decay_factor once per hop (not cumulative
+                # with current_intensity which already carries prior decay).
                 hop_number = current_hop + 1
-                distance_decay = self._config.decay_factor**hop_number
+                per_hop_decay = self._config.decay_factor
 
                 # Susceptibility based on neuroticism
                 susceptibility = self._get_susceptibility(target_id)
@@ -286,7 +287,7 @@ class InfluencerModel:
                 intensity = (
                     current_intensity
                     * edge_weight
-                    * distance_decay
+                    * per_hop_decay
                     * self._config.emotion_contagion_rate
                     * susceptibility
                     * time_decay

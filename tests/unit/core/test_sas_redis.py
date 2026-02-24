@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import fakeredis.aioredis
@@ -611,7 +611,10 @@ class TestErrorHandling:
             await sas.set_cc_decision({"test": "data"})
             assert not sas.is_healthy
 
-        with patch.object(redis, "lpush", side_effect=redis_lib.RedisError("Connection lost")):
+        # add_action and add_stm now use pipeline, so patch pipeline to raise
+        with patch.object(
+            redis, "pipeline", side_effect=redis_lib.RedisError("Connection lost")
+        ):
             await sas.add_action(ActionHistoryEntry(action="test"))
             await sas.add_stm(MemoryEntry(content="test"))
             assert not sas.is_healthy
@@ -636,3 +639,129 @@ class TestErrorHandling:
             with pytest.raises(redis_lib.RedisError):
                 await sas.clear()
             assert not sas.is_healthy
+
+
+# ---------------------------------------------------------------------------
+# Atomic Pipeline Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicPipeline:
+    """Tests for atomic pipeline operations in add_action and add_stm."""
+
+    async def test_add_action_uses_pipeline(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """add_action should use a Redis pipeline for lpush+ltrim atomicity."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+
+        # Add an action and verify it works correctly
+        entry = ActionHistoryEntry(action="test_atomic")
+        await sas.add_action(entry)
+
+        # Verify the action was stored
+        history = await sas.get_action_history()
+        assert len(history) == 1
+        assert history[0].action == "test_atomic"
+
+        # Verify the pipeline is used (mock pipeline to track calls)
+        mock_pipe = AsyncMock()
+        mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
+        mock_pipe.__aexit__ = AsyncMock(return_value=False)
+        mock_pipe.execute = AsyncMock(return_value=[1, True])
+
+        with patch.object(redis, "pipeline", return_value=mock_pipe):
+            entry2 = ActionHistoryEntry(action="test_atomic_2")
+            await sas.add_action(entry2)
+
+            # Pipeline should have been called with transaction=True
+            redis.pipeline.assert_called_once_with(transaction=True)
+            mock_pipe.lpush.assert_called_once()
+            mock_pipe.ltrim.assert_called_once()
+            mock_pipe.execute.assert_called_once()
+
+    async def test_add_stm_uses_pipeline(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """add_stm should use a Redis pipeline for lpush+ltrim atomicity."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+
+        # Add an STM entry and verify it works correctly
+        entry = MemoryEntry(content="test_atomic_stm")
+        await sas.add_stm(entry)
+
+        # Verify the entry was stored
+        stm = await sas.get_stm()
+        assert len(stm) == 1
+        assert stm[0].content == "test_atomic_stm"
+
+        # Verify the pipeline is used
+        mock_pipe = AsyncMock()
+        mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
+        mock_pipe.__aexit__ = AsyncMock(return_value=False)
+        mock_pipe.execute = AsyncMock(return_value=[1, True])
+
+        with patch.object(redis, "pipeline", return_value=mock_pipe):
+            entry2 = MemoryEntry(content="test_atomic_stm_2")
+            await sas.add_stm(entry2)
+
+            redis.pipeline.assert_called_once_with(transaction=True)
+            mock_pipe.lpush.assert_called_once()
+            mock_pipe.ltrim.assert_called_once()
+            mock_pipe.execute.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# JSON Decode Error Handling
+# ---------------------------------------------------------------------------
+
+
+class TestJSONDecodeErrorHandling:
+    """Tests for JSON decode error handling in cc_decision and section access."""
+
+    async def test_get_last_cc_decision_handles_invalid_json(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_last_cc_decision should return None on invalid JSON."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+
+        # Write invalid JSON directly to Redis
+        await redis.set(sas._key("cc_decision"), b"not-valid-json{{{")
+        result = await sas.get_last_cc_decision()
+        assert result is None
+        assert not sas.is_healthy
+
+    async def test_get_section_handles_invalid_json(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """get_section should return empty dict on invalid JSON."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+        await sas.initialize()
+
+        # Write invalid JSON directly to Redis
+        await redis.set(sas._key("custom_section"), b"not-valid-json{{{")
+        result = await sas.get_section("custom_section")
+        assert result == {}
+        assert not sas.is_healthy
+
+
+# ---------------------------------------------------------------------------
+# Initialize Ping Test
+# ---------------------------------------------------------------------------
+
+
+class TestInitializePing:
+    async def test_initialize_pings_redis(
+        self, redis: fakeredis.aioredis.FakeRedis, agent_id: str
+    ) -> None:
+        """initialize should call ping() to verify connectivity."""
+        sas = RedisSAS(redis=redis, agent_id=agent_id)
+
+        # Patch ping to verify it's called
+        with patch.object(redis, "ping", wraps=redis.ping) as mock_ping:
+            await sas.initialize()
+            mock_ping.assert_called_once()
+            assert sas.is_healthy

@@ -15,8 +15,18 @@ from collections import deque
 from typing import Protocol, runtime_checkable
 
 from openai import AsyncOpenAI
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import BadRequestError as OpenAIBadRequestError
+from openai import PermissionDeniedError as OpenAIPermissionDeniedError
 
 from piano.core.types import LLMRequest, LLMResponse, ModuleTier
+
+# Non-transient OpenAI errors that should not be retried
+_NON_TRANSIENT_ERRORS = (
+    OpenAIAuthenticationError,
+    OpenAIBadRequestError,
+    OpenAIPermissionDeniedError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +53,8 @@ DEFAULT_MODELS: dict[ModuleTier, str] = {
 }
 
 # Static cost table: model -> (cost_per_1k_input, cost_per_1k_output)
+# Maintenance: update this table when adding new models or when OpenAI changes pricing.
+# Prices sourced from https://openai.com/api/pricing/
 _OPENAI_COSTS: dict[str, tuple[float, float]] = {
     "gpt-4o": (0.0025, 0.010),
     "gpt-4o-mini": (0.000150, 0.000600),
@@ -147,9 +159,6 @@ class OpenAIProvider:
                 f"(limit: {self._calls_per_minute_limit})"
             )
 
-        # Record this call
-        self._call_timestamps.append(now)
-
     @property
     def total_cost_usd(self) -> float:
         """Return the total cost in USD across all calls."""
@@ -239,6 +248,7 @@ class OpenAIProvider:
                 # Update tracking after successful call
                 self._total_cost_usd += cost
                 self._call_count += 1
+                self._call_timestamps.append(time.monotonic())
 
                 return LLMResponse(
                     content=content,
@@ -247,6 +257,9 @@ class OpenAIProvider:
                     latency_ms=latency_ms,
                     cost_usd=cost,
                 )
+            except _NON_TRANSIENT_ERRORS:
+                # Non-transient errors should not be retried
+                raise
             except Exception as exc:
                 last_exception = exc
                 if attempt < self.max_retries - 1:

@@ -2,7 +2,7 @@
 # Usage: docker compose -f docker/docker-compose.sim.yml up
 
 services:
-  # Minecraft Server (Pufferfish 1.20.4, flat world for bots)
+  # Minecraft Server (Paper 1.20.4, flat world for bots)
   minecraft:
     image: itzg/minecraft-server:latest
     environment:
@@ -23,8 +23,12 @@ services:
       - "25565:25565"
     volumes:
       - mc-data:/data
-      - ./mc-server/server.properties:/data/server.properties
+      - ./mc-server/bukkit.yml:/data/bukkit.yml
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 3G
     healthcheck:
       test: ["CMD", "mc-health"]
       interval: 10s
@@ -65,15 +69,20 @@ services:
     depends_on:
       minecraft:
         condition: service_healthy
-    # Expose port range for multi-bot (5555-5570 covers up to 8 bots)
+    # Expose port range for multi-bot (5555-5590 covers up to 18 bots)
     ports:
-      - "5555-5570:5555-5570"
+      - "5555-5590:5555-5590"
+    # Healthcheck: TCP-only check on base ZMQ port (cannot verify ZMQ protocol via simple probe)
     healthcheck:
       test: ["CMD-SHELL", "node -e \"const n=require('net');const c=n.createConnection({port:5555});c.on('connect',()=>{c.end();process.exit(0)});c.on('error',()=>process.exit(1))\""]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     networks:
       - piano-sim
 
@@ -87,6 +96,8 @@ services:
       PIANO_BRIDGE__HOST: bridge
       PIANO_BRIDGE__BASE_COMMAND_PORT: "5555"
       PIANO_BRIDGE__BASE_EVENT_PORT: "5556"
+      PIANO_QDRANT__URL: "http://qdrant:6333"
+    # NUM_BOTS must be consistent between bridge and agent --agents flag
     command: >
       uv run piano
       --agents ${NUM_BOTS:-3}
@@ -97,12 +108,18 @@ services:
         condition: service_healthy
       bridge:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     networks:
       - piano-sim
 
 volumes:
   mc-data:
 
+# Note: This compose uses network "piano-sim" (not "piano_network" from other compose files).
+# Use docker compose -f ... --project-name if network sharing is needed.
 networks:
   piano-sim:
     driver: bridge

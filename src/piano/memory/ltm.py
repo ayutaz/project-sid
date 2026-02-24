@@ -184,16 +184,16 @@ class QdrantLTMStore:
         )
 
     async def initialize(self) -> None:
-        """Initialize Qdrant client and create collections."""
+        """Initialize Qdrant async client and create collections."""
         try:
-            from qdrant_client import QdrantClient
+            from qdrant_client import AsyncQdrantClient
 
             kwargs: dict[str, object] = {"url": self.url}
             if self.use_https:
                 kwargs["https"] = True
             if self.api_key:
                 kwargs["api_key"] = self.api_key
-            self._client = QdrantClient(**kwargs)
+            self._client = AsyncQdrantClient(**kwargs)
 
             # Note: Collections are created on-demand per agent in store()
             logger.info("qdrant_initialized", url=self.url)
@@ -202,9 +202,9 @@ class QdrantLTMStore:
             raise
 
     async def shutdown(self) -> None:
-        """Shutdown the Qdrant client."""
+        """Shutdown the Qdrant async client."""
         if self._client is not None:
-            # Qdrant client doesn't require explicit shutdown
+            await self._client.close()
             self._client = None
             logger.info("qdrant_shutdown")
 
@@ -213,25 +213,32 @@ class QdrantLTMStore:
         return f"{self.collection_prefix}_{agent_id}"
 
     async def _ensure_collection(self, agent_id: str) -> None:
-        """Ensure collection exists for agent."""
+        """Ensure collection exists for agent (idempotent)."""
         if self._client is None:
             raise RuntimeError("QdrantClient not initialized")
 
         from qdrant_client.models import Distance, VectorParams
 
         collection_name = self._collection_name(agent_id)
-        collections = self._client.get_collections().collections
-        exists = any(c.name == collection_name for c in collections)
+        collections = await self._client.get_collections()
+        exists = any(c.name == collection_name for c in collections.collections)
 
         if not exists:
-            self._client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=self.embedding_dim,
-                    distance=Distance.COSINE,
-                ),
-            )
-            logger.info("qdrant_collection_created", collection=collection_name)
+            try:
+                await self._client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=self.embedding_dim,
+                        distance=Distance.COSINE,
+                    ),
+                )
+                logger.info("qdrant_collection_created", collection=collection_name)
+            except Exception:
+                # Collection may have been created by a concurrent call; verify it exists
+                collections = await self._client.get_collections()
+                exists = any(c.name == collection_name for c in collections.collections)
+                if not exists:
+                    raise
 
     async def store(self, agent_id: str, entry: LTMEntry) -> UUID:
         """Store a memory entry in Qdrant."""
@@ -262,7 +269,7 @@ class QdrantLTMStore:
             },
         )
 
-        self._client.upsert(
+        await self._client.upsert(
             collection_name=self._collection_name(agent_id),
             points=[point],
         )
@@ -281,9 +288,10 @@ class QdrantLTMStore:
             raise RuntimeError("QdrantClient not initialized")
 
         try:
-            point = self._client.retrieve(
+            point = await self._client.retrieve(
                 collection_name=self._collection_name(agent_id),
                 ids=[str(entry_id)],
+                with_vectors=True,
             )
 
             if not point:
@@ -327,7 +335,7 @@ class QdrantLTMStore:
             raise RuntimeError("QdrantClient not initialized")
 
         try:
-            results = self._client.search(
+            results = await self._client.search(
                 collection_name=self._collection_name(agent_id),
                 query_vector=query_embedding,
                 limit=limit,
@@ -372,9 +380,11 @@ class QdrantLTMStore:
             raise RuntimeError("QdrantClient not initialized")
 
         try:
-            self._client.delete(
+            from qdrant_client import models
+
+            await self._client.delete(
                 collection_name=self._collection_name(agent_id),
-                points_selector=[str(entry_id)],
+                points_selector=models.PointIdsList(points=[str(entry_id)]),
             )
             logger.debug("ltm_deleted", agent_id=agent_id, entry_id=str(entry_id))
             return True
@@ -387,13 +397,13 @@ class QdrantLTMStore:
             raise RuntimeError("QdrantClient not initialized")
 
         try:
-            collection_info = self._client.get_collection(
+            collection_info = await self._client.get_collection(
                 collection_name=self._collection_name(agent_id)
             )
             count = collection_info.points_count
 
-            # For avg_importance, we'd need to fetch all points (expensive)
-            # For now, return basic stats
+            # TODO: avg_importance and total_accesses require a full scroll/scan
+            # which is expensive. Consider caching or periodic computation.
             return {
                 "count": count,
                 "avg_importance": 0.0,  # Would require full scan
@@ -416,11 +426,16 @@ class InMemoryLTMStore:
     Used for testing without Qdrant dependency.
     """
 
-    def __init__(self) -> None:
-        """Initialize the in-memory store."""
+    def __init__(self, max_entries: int = 10000) -> None:
+        """Initialize the in-memory store.
+
+        Args:
+            max_entries: Maximum entries per agent. Oldest entries are evicted when full.
+        """
         # agent_id -> {entry_id -> LTMEntry}
         self._store: dict[str, dict[UUID, LTMEntry]] = {}
-        logger.info("inmemory_ltm_init")
+        self._max_entries = max_entries
+        logger.info("inmemory_ltm_init", max_entries=max_entries)
 
     async def initialize(self) -> None:
         """Initialize (no-op for in-memory)."""
@@ -431,11 +446,18 @@ class InMemoryLTMStore:
         pass
 
     async def store(self, agent_id: str, entry: LTMEntry) -> UUID:
-        """Store a memory entry in memory."""
+        """Store a memory entry in memory. Evicts oldest when at capacity."""
         if agent_id not in self._store:
             self._store[agent_id] = {}
 
-        self._store[agent_id][entry.id] = entry
+        agent_store = self._store[agent_id]
+
+        # Evict oldest entries if at capacity (and this is a new entry, not an update)
+        if entry.id not in agent_store and len(agent_store) >= self._max_entries:
+            oldest_id = min(agent_store, key=lambda eid: agent_store[eid].timestamp)
+            del agent_store[oldest_id]
+
+        agent_store[entry.id] = entry
         logger.debug(
             "ltm_stored",
             agent_id=agent_id,

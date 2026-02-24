@@ -1,7 +1,12 @@
 """Reusable test helpers for PIANO tests.
 
-Provides InMemorySAS (dict-based SAS implementation) and DummyModule
-for testing without external dependencies (Redis, LLM, etc.).
+This is the **canonical** InMemorySAS implementation used across the entire
+test suite.  All test conftest files (tests/conftest.py, tests/integration/conftest.py,
+tests/e2e/conftest.py, etc.) import InMemorySAS from here.  Do NOT create
+duplicate SAS implementations elsewhere -- always import from ``tests.helpers``.
+
+Also provides DummyModule for testing without external dependencies
+(Redis, LLM, etc.).
 """
 
 from __future__ import annotations
@@ -160,15 +165,19 @@ class InMemorySAS(SharedAgentState):
     # --- Snapshot ---
 
     async def snapshot(self) -> dict[str, Any]:
-        """Get a full snapshot of all SAS sections."""
+        """Get a full snapshot of all SAS sections.
+
+        Returns action_history and stm in newest-first order (consistent
+        with RedisSAS.snapshot which calls get_action_history/get_stm).
+        """
         return {
             "percepts": self._percepts.model_dump(),
             "goals": self._goals.model_dump(),
             "social": self._social.model_dump(),
             "plans": self._plans.model_dump(),
-            "action_history": [e.model_dump() for e in self._action_history],
+            "action_history": [e.model_dump() for e in reversed(self._action_history)],
             "working_memory": [e.model_dump() for e in self._working_memory],
-            "stm": [e.model_dump() for e in self._stm],
+            "stm": [e.model_dump() for e in reversed(self._stm)],
             "self_reflection": self._self_reflection.model_dump(),
             "cc_decision": self._cc_decision,
         }

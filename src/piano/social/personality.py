@@ -25,7 +25,7 @@ from typing import ClassVar
 import structlog
 from pydantic import BaseModel, field_validator
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 class PersonalityProfile(BaseModel):
@@ -76,33 +76,40 @@ class PersonalityProfile(BaseModel):
             traits.append("highly curious and creative")
         elif self.openness < 0.3:
             traits.append("practical and conventional")
+        else:
+            traits.append("has moderate openness")
 
         # Conscientiousness
         if self.conscientiousness > 0.7:
             traits.append("organized and disciplined")
         elif self.conscientiousness < 0.3:
             traits.append("flexible and spontaneous")
+        else:
+            traits.append("has moderate conscientiousness")
 
         # Extraversion
         if self.extraversion > 0.7:
             traits.append("outgoing and sociable")
         elif self.extraversion < 0.3:
             traits.append("introverted and reserved")
+        else:
+            traits.append("has moderate extraversion")
 
         # Agreeableness
         if self.agreeableness > 0.7:
             traits.append("cooperative and trusting")
         elif self.agreeableness < 0.3:
             traits.append("competitive and skeptical")
+        else:
+            traits.append("has moderate agreeableness")
 
         # Neuroticism
         if self.neuroticism > 0.7:
             traits.append("emotionally sensitive")
         elif self.neuroticism < 0.3:
             traits.append("emotionally stable and calm")
-
-        if not traits:
-            return "You have a balanced personality with moderate traits across all dimensions."
+        else:
+            traits.append("has moderate neuroticism")
 
         return f"You are {', '.join(traits)}."
 
@@ -160,17 +167,6 @@ class PersonalityProfile(BaseModel):
             + (1.0 - self.neuroticism) * 0.4
             + (1.0 - self.conscientiousness) * 0.1
         )
-
-    def validate_traits(self) -> None:
-        """Validate that all traits are in valid range.
-
-        Raises:
-            ValueError: If any trait is outside [0.0, 1.0]
-        """
-        # Validation happens automatically via field_validator
-        # This method exists for explicit validation calls
-        pass
-
 
 class PersonalityArchetypes:
     """Predefined personality archetypes for common agent roles.

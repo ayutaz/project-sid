@@ -6,7 +6,6 @@ tests/
 docs/
 benchmarks/
 *.md
-!pyproject.toml
 .github/
 k8s/
 .ruff_cache

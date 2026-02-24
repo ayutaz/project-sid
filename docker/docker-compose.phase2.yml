@@ -4,7 +4,7 @@
 # Includes:
 #   - Redis 7 (cache, pub/sub, shared state)
 #   - PostgreSQL 16 (agent state, memory, experiment results)
-#   - Pufferfish MC Server
+#   - Paper MC Server
 #   - Velocity Proxy
 #   - Qdrant (vector DB)
 #   - Prometheus (metrics)
@@ -17,6 +17,7 @@ services:
   # --- Redis: Cache, Pub/Sub, Shared State ---
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -41,12 +42,13 @@ services:
   # --- PostgreSQL: Agent State, Memory, Experiment Results ---
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
       POSTGRES_DB: piano
       POSTGRES_USER: piano
-      POSTGRES_PASSWORD: piano_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-piano_dev}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -59,7 +61,8 @@ services:
 
   # --- Qdrant: Vector Database for Embeddings ---
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.7.4
+    restart: unless-stopped
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -75,19 +78,20 @@ services:
     # TLS Configuration (uncomment when PIANO_TLS_ENABLED=true)
     # environment:
     #   - QDRANT__SERVICE__ENABLE_TLS=true
-    #   - QDRANT__TLS__CERT=/tls/redis.crt
-    #   - QDRANT__TLS__KEY=/tls/redis.key
+    #   - QDRANT__TLS__CERT=/tls/qdrant.crt
+    #   - QDRANT__TLS__KEY=/tls/qdrant.key
 
   # ===== Minecraft =====
 
-  # --- Pufferfish: MC Server ---
+  # --- Paper: MC Server ---
   minecraft:
     image: itzg/minecraft-server
+    restart: unless-stopped
     ports:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      TYPE: PUFFERFISH
+      TYPE: "PAPER"
       VERSION: "1.20.4"
       ONLINE_MODE: "FALSE"
       MAX_PLAYERS: 100
@@ -107,6 +111,7 @@ services:
   # --- Velocity: Proxy for MC Server ---
   velocity:
     image: itzg/bungeecord
+    restart: unless-stopped
     ports:
       - "25577:25577"
     environment:
@@ -118,6 +123,12 @@ services:
     depends_on:
       minecraft:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 25577 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - piano_network
 
@@ -125,7 +136,8 @@ services:
 
   # --- Prometheus: Metrics Collection ---
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.48.0
+    restart: unless-stopped
     ports:
       - "9090:9090"
     volumes:
@@ -145,7 +157,8 @@ services:
 
   # --- Loki: Log Aggregation ---
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:2.9.0
+    restart: unless-stopped
     ports:
       - "3100:3100"
     volumes:
@@ -161,7 +174,8 @@ services:
 
   # --- Grafana: Dashboards & Visualization ---
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.2.0
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:

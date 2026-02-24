@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from piano.bridge.client import BridgeClient
 from piano.config.settings import (
@@ -234,33 +234,22 @@ class TestQdrantLTMStoreTLS:
             use_https=True,
             api_key="my-api-key",
         )
-        with patch("piano.memory.ltm.QdrantClient", create=True) as mock_cls:
-            # Patch the import inside initialize
-            import sys
-
-            mock_module = MagicMock()
-            mock_module.QdrantClient = mock_cls
-            sys.modules["qdrant_client"] = mock_module
-            try:
-                await store.initialize()
-                mock_cls.assert_called_once_with(
-                    url="https://qdrant.example.com:6333",
-                    https=True,
-                    api_key="my-api-key",
-                )
-            finally:
-                del sys.modules["qdrant_client"]
+        with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.close = AsyncMock()
+            mock_cls.return_value = mock_client
+            await store.initialize()
+            mock_cls.assert_called_once_with(
+                url="https://qdrant.example.com:6333",
+                https=True,
+                api_key="my-api-key",
+            )
 
     async def test_initialize_without_https(self) -> None:
         store = QdrantLTMStore(url="http://localhost:6333")
-        with patch("piano.memory.ltm.QdrantClient", create=True) as mock_cls:
-            import sys
-
-            mock_module = MagicMock()
-            mock_module.QdrantClient = mock_cls
-            sys.modules["qdrant_client"] = mock_module
-            try:
-                await store.initialize()
-                mock_cls.assert_called_once_with(url="http://localhost:6333")
-            finally:
-                del sys.modules["qdrant_client"]
+        with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.close = AsyncMock()
+            mock_cls.return_value = mock_client
+            await store.initialize()
+            mock_cls.assert_called_once_with(url="http://localhost:6333")

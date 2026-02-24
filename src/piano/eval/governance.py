@@ -26,6 +26,8 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from piano.eval.social_metrics import _manual_pearson
+
 logger = structlog.get_logger(__name__)
 
 
@@ -284,7 +286,7 @@ class VotingMetrics:
         influenced_vals = [1.0 if v.influenced_by else 0.0 for v in self._votes]
         vote_vals = [1.0 if v.vote else 0.0 for v in self._votes]
 
-        return _safe_pearson(influenced_vals, vote_vals)
+        return _manual_pearson(influenced_vals, vote_vals)
 
     # -- helpers ------------------------------------------------------------
 
@@ -381,7 +383,7 @@ class ConstitutionMetrics:
         rule_id: str,
         before_window: tuple[datetime, datetime],
         after_window: tuple[datetime, datetime],
-    ) -> float:
+    ) -> float | None:
         """Measure the behavioural change after a rule amendment.
 
         Computes ``compliance_after - compliance_before`` so that a
@@ -394,7 +396,7 @@ class ConstitutionMetrics:
 
         Returns:
             Compliance delta (after - before).  Range is [-1.0, 1.0].
-            Returns 0.0 when either window contains no matching behaviours.
+            Returns ``None`` when either window contains no matching behaviours.
         """
         before_behaviors = [
             b
@@ -410,7 +412,7 @@ class ConstitutionMetrics:
         ]
 
         if not before_behaviors or not after_behaviors:
-            return 0.0
+            return None
 
         compliance_before = sum(1 for b in before_behaviors if b.compliant) / len(before_behaviors)
         compliance_after = sum(1 for b in after_behaviors if b.compliant) / len(after_behaviors)
@@ -522,35 +524,3 @@ def generate_governance_report(
     return report
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _safe_pearson(xs: list[float], ys: list[float]) -> float:
-    """Compute Pearson r without scipy, returning 0.0 on degenerate input.
-
-    Args:
-        xs: First variable.
-        ys: Second variable (same length as *xs*).
-
-    Returns:
-        Pearson correlation coefficient, or 0.0 when the computation
-        would be undefined (e.g. constant input, insufficient data).
-    """
-    n = len(xs)
-    if n < 2 or n != len(ys):
-        return 0.0
-
-    mean_x = sum(xs) / n
-    mean_y = sum(ys) / n
-
-    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
-    var_x = sum((x - mean_x) ** 2 for x in xs)
-    var_y = sum((y - mean_y) ** 2 for y in ys)
-
-    denom = (var_x * var_y) ** 0.5
-    if denom == 0.0:
-        return 0.0
-
-    return cov / denom

@@ -174,6 +174,24 @@ async def test_check_one_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.latency_ms > _DEGRADED_LATENCY_THRESHOLD
 
 
+async def test_check_one_degraded_when_no_events_received(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ping ok but no events ever received -> DEGRADED (PUB/SUB may not be working)."""
+    monkeypatch.setattr(
+        "piano.bridge.health.time.monotonic",
+        _make_time_counter(start=100.0, step=0.001),
+    )
+
+    monitor = BridgeHealthMonitor()
+    # No events recorded for this agent at all
+    bridge = _make_bridge(ping_return=True)
+    result = await monitor.check_one("a1", bridge)
+
+    assert result.status == BridgeHealthStatus.DEGRADED
+    assert result.last_event_age_s == -1.0
+
+
 async def test_record_event_resets_staleness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
