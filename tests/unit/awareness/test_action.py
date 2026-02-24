@@ -171,9 +171,7 @@ class TestCheckMove:
         result = await module.tick(sas)
         assert result.data["last_action_success"] is True
 
-    async def test_move_failure_too_far(
-        self, module: ActionAwareness, sas: InMemorySAS
-    ) -> None:
+    async def test_move_failure_too_far(self, module: ActionAwareness, sas: InMemorySAS) -> None:
         """Agent is more than 5 blocks from the target."""
         sas._action_history = [
             ActionHistoryEntry(
@@ -439,9 +437,7 @@ class TestConsecutiveFailures:
 class TestEmptyHistory:
     """Tests for handling empty action history."""
 
-    async def test_empty_action_history(
-        self, module: ActionAwareness, sas: InMemorySAS
-    ) -> None:
+    async def test_empty_action_history(self, module: ActionAwareness, sas: InMemorySAS) -> None:
         """Returns success with no discrepancies when history is empty."""
         result = await module.tick(sas)
         assert result.data["last_action_success"] is True
@@ -466,9 +462,7 @@ class TestModuleMetadata:
     def test_repr(self, module: ActionAwareness) -> None:
         assert "ActionAwareness" in repr(module)
 
-    async def test_result_module_name(
-        self, module: ActionAwareness, sas: InMemorySAS
-    ) -> None:
+    async def test_result_module_name(self, module: ActionAwareness, sas: InMemorySAS) -> None:
         """ModuleResult has correct module_name and tier."""
         result = await module.tick(sas)
         assert result.module_name == "action_awareness"

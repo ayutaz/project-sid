@@ -260,9 +260,7 @@ class TestConsolidationSummarization:
             max_stm_before_consolidation=3,
             batch_size=10,
         )
-        module = MemoryConsolidationModule(
-            ltm_store=ltm_store, policy=policy, llm_provider=llm
-        )
+        module = MemoryConsolidationModule(ltm_store=ltm_store, policy=policy, llm_provider=llm)
 
         # Add multiple related entries
         await sas.add_stm(_entry("Talked with Lila", importance=0.7, age_minutes=5))
@@ -317,9 +315,7 @@ class TestConsolidationSummarization:
             max_stm_before_consolidation=2,
             batch_size=10,
         )
-        module = MemoryConsolidationModule(
-            ltm_store=ltm_store, policy=policy, llm_provider=llm
-        )
+        module = MemoryConsolidationModule(ltm_store=ltm_store, policy=policy, llm_provider=llm)
 
         await sas.add_stm(_entry("low", importance=0.6, age_minutes=2))
         await sas.add_stm(_entry("high", importance=0.9, age_minutes=2))
@@ -437,9 +433,7 @@ class TestConsolidationEdgeCases:
             max_stm_before_consolidation=1,
             batch_size=10,
         )
-        module = MemoryConsolidationModule(
-            ltm_store=ltm_store, policy=policy, llm_provider=llm
-        )
+        module = MemoryConsolidationModule(ltm_store=ltm_store, policy=policy, llm_provider=llm)
 
         await sas.add_stm(_entry("single", importance=0.8, age_minutes=2))
 

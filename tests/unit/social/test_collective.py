@@ -19,6 +19,7 @@ from piano.social.collective import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_obs(
     observer_id: str,
     target_id: str,
@@ -58,6 +59,7 @@ def _make_observations_for_target(
 # Observation model tests
 # ---------------------------------------------------------------------------
 
+
 class TestObservationModel:
     """Tests for the Observation Pydantic model."""
 
@@ -92,6 +94,7 @@ class TestObservationModel:
 # ---------------------------------------------------------------------------
 # AggregatedResult model tests
 # ---------------------------------------------------------------------------
+
 
 class TestAggregatedResult:
     """Tests for the AggregatedResult model."""
@@ -136,6 +139,7 @@ class TestAggregatedResult:
 # ThresholdResult model tests
 # ---------------------------------------------------------------------------
 
+
 class TestThresholdResult:
     """Tests for the ThresholdResult model."""
 
@@ -160,6 +164,7 @@ class TestThresholdResult:
 # ---------------------------------------------------------------------------
 # CollectiveIntelligence — aggregate_observations
 # ---------------------------------------------------------------------------
+
 
 class TestAggregateObservations:
     """Tests for CollectiveIntelligence.aggregate_observations."""
@@ -255,6 +260,7 @@ class TestAggregateObservations:
 # CollectiveIntelligence — apply_threshold
 # ---------------------------------------------------------------------------
 
+
 class TestApplyThreshold:
     """Tests for CollectiveIntelligence.apply_threshold."""
 
@@ -295,6 +301,7 @@ class TestApplyThreshold:
 # CollectiveIntelligence — get_confidence
 # ---------------------------------------------------------------------------
 
+
 class TestGetConfidence:
     """Tests for confidence calculation."""
 
@@ -319,10 +326,7 @@ class TestGetConfidence:
 
     def test_confidence_monotonically_increases(self) -> None:
         """Test confidence increases with more observers."""
-        values = [
-            CollectiveIntelligence.get_confidence_from_count(n)
-            for n in range(1, 13)
-        ]
+        values = [CollectiveIntelligence.get_confidence_from_count(n) for n in range(1, 13)]
         for i in range(len(values) - 1):
             assert values[i] <= values[i + 1]
 
@@ -343,6 +347,7 @@ class TestGetConfidence:
 # ---------------------------------------------------------------------------
 # CollectiveIntelligence — threshold_analysis
 # ---------------------------------------------------------------------------
+
 
 class TestThresholdAnalysis:
     """Tests for threshold_analysis with synthetic data."""
@@ -447,6 +452,7 @@ class TestThresholdAnalysis:
 # CollectiveIntelligence — aggregate_all_targets
 # ---------------------------------------------------------------------------
 
+
 class TestAggregateAllTargets:
     """Tests for aggregate_all_targets."""
 
@@ -485,6 +491,7 @@ class TestAggregateAllTargets:
 # ---------------------------------------------------------------------------
 # Integration / edge-case tests
 # ---------------------------------------------------------------------------
+
 
 class TestCollectiveIntelligenceIntegration:
     """Integration and edge-case tests."""

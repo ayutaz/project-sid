@@ -353,9 +353,7 @@ class TestSnapshot:
         }
         assert set(snap.keys()) == expected_keys
 
-    async def test_snapshot_reflects_current_state(
-        self, sas: RedisSAS, agent_id: str
-    ) -> None:
+    async def test_snapshot_reflects_current_state(self, sas: RedisSAS, agent_id: str) -> None:
         await sas.update_goals(GoalData(current_goal="build house"))
         await sas.add_action(ActionHistoryEntry(action="collect wood"))
         snap = await sas.snapshot()
@@ -404,9 +402,7 @@ class TestLifecycle:
 
 
 class TestKeyPartitioning:
-    async def test_different_agents_isolated(
-        self, redis: fakeredis.aioredis.FakeRedis
-    ) -> None:
+    async def test_different_agents_isolated(self, redis: fakeredis.aioredis.FakeRedis) -> None:
         """Two agents should not see each other's data."""
         sas_a = RedisSAS(redis=redis, agent_id="agent-a")
         sas_b = RedisSAS(redis=redis, agent_id="agent-b")
@@ -419,9 +415,7 @@ class TestKeyPartitioning:
         assert (await sas_a.get_goals()).current_goal == "goal-a"
         assert (await sas_b.get_goals()).current_goal == "goal-b"
 
-    async def test_clear_only_affects_own_agent(
-        self, redis: fakeredis.aioredis.FakeRedis
-    ) -> None:
+    async def test_clear_only_affects_own_agent(self, redis: fakeredis.aioredis.FakeRedis) -> None:
         sas_a = RedisSAS(redis=redis, agent_id="agent-a")
         sas_b = RedisSAS(redis=redis, agent_id="agent-b")
         await sas_a.initialize()

@@ -179,9 +179,7 @@ class TestPlanGeneration:
 class TestPlanExecution:
     """Tests for tracking plan progress."""
 
-    async def test_plan_executing_status(
-        self, module: PlanningModule, sas: InMemorySAS
-    ) -> None:
+    async def test_plan_executing_status(self, module: PlanningModule, sas: InMemorySAS) -> None:
         """When plan is executing, report current step."""
         # Manually set an executing plan in SAS
         await sas.update_plans(
@@ -440,9 +438,7 @@ class TestEdgeCases:
         self, module: PlanningModule, sas: InMemorySAS, mock_llm: AsyncMock
     ) -> None:
         """LLM returns invalid JSON."""
-        mock_llm.complete.return_value = LLMResponse(
-            content="not valid json", model="gpt-4o"
-        )
+        mock_llm.complete.return_value = LLMResponse(content="not valid json", model="gpt-4o")
         await sas.update_goals(GoalData(current_goal="test"))
 
         result = await module.tick(sas)

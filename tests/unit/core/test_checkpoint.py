@@ -463,14 +463,14 @@ class TestCheckpointPathTraversal:
         sas = InMemorySAS("agent-001")
 
         invalid_ids = [
-            "agent 001",      # space
-            "agent/001",      # forward slash
-            "agent\\001",     # backslash
-            "agent.001",      # dot
-            "agent@001",      # at sign
-            "agent:001",      # colon
-            "",               # empty string
-            "agent\x00id",   # null byte
+            "agent 001",  # space
+            "agent/001",  # forward slash
+            "agent\\001",  # backslash
+            "agent.001",  # dot
+            "agent@001",  # at sign
+            "agent:001",  # colon
+            "",  # empty string
+            "agent\x00id",  # null byte
         ]
         for bad_id in invalid_ids:
             with pytest.raises(ValueError, match="Invalid agent_id"):

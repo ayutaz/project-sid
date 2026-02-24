@@ -27,9 +27,7 @@ def _mock_role_response(
     reasoning: str = "Test reasoning",
 ) -> str:
     """Build a mock JSON response for role inference."""
-    return json.dumps(
-        {"role": role, "confidence": confidence, "reasoning": reasoning}
-    )
+    return json.dumps({"role": role, "confidence": confidence, "reasoning": reasoning})
 
 
 def _make_request(
@@ -73,9 +71,17 @@ class TestAgentRole:
     def test_all_roles_defined(self):
         """All expected roles exist in the enum."""
         expected = {
-            "farmer", "miner", "engineer", "guard", "explorer",
-            "blacksmith", "scout", "strategist", "curator",
-            "collector", "other",
+            "farmer",
+            "miner",
+            "engineer",
+            "guard",
+            "explorer",
+            "blacksmith",
+            "scout",
+            "strategist",
+            "curator",
+            "collector",
+            "other",
         }
         actual = {r.value for r in AgentRole}
         assert actual == expected
@@ -95,9 +101,7 @@ class TestRoleInferenceRequest:
     """Tests for RoleInferenceRequest model."""
 
     def test_creation_with_defaults(self):
-        req = RoleInferenceRequest(
-            agent_id="a1", recent_goals=["mine iron"]
-        )
+        req = RoleInferenceRequest(agent_id="a1", recent_goals=["mine iron"])
         assert req.agent_id == "a1"
         assert req.recent_goals == ["mine iron"]
         assert req.timestamp is not None
@@ -179,17 +183,11 @@ class TestRoleInferencePipeline:
     @pytest.fixture()
     def mock_llm(self) -> MockLLMProvider:
         llm = MockLLMProvider()
-        llm.set_default_response(
-            _mock_role_response(
-                "farmer", 0.9, "Goals focus on agriculture"
-            )
-        )
+        llm.set_default_response(_mock_role_response("farmer", 0.9, "Goals focus on agriculture"))
         return llm
 
     @pytest.fixture()
-    def pipeline(
-        self, mock_llm: MockLLMProvider
-    ) -> RoleInferencePipeline:
+    def pipeline(self, mock_llm: MockLLMProvider) -> RoleInferencePipeline:
         return RoleInferencePipeline(mock_llm)
 
     async def test_infer_role_basic(
@@ -198,9 +196,7 @@ class TestRoleInferencePipeline:
         mock_llm: MockLLMProvider,
     ):
         """Basic single-agent inference returns correct role."""
-        request = _make_request(
-            goals=["gather wheat", "plant seeds", "harvest crops"]
-        )
+        request = _make_request(goals=["gather wheat", "plant seeds", "harvest crops"])
         result = await pipeline.infer_role(request)
 
         assert result.agent_id == "agent-001"
@@ -215,18 +211,14 @@ class TestRoleInferencePipeline:
         mock_llm: MockLLMProvider,
     ):
         """Inference correctly picks up miner role."""
-        mock_llm.set_default_response(
-            _mock_role_response("miner", 0.95, "Agent mines ores")
-        )
+        mock_llm.set_default_response(_mock_role_response("miner", 0.95, "Agent mines ores"))
         request = _make_request(goals=["mine iron ore", "dig tunnel"])
         result = await pipeline.infer_role(request)
 
         assert result.inferred_role == AgentRole.MINER
         assert result.confidence == 0.95
 
-    async def test_infer_role_empty_goals(
-        self, pipeline: RoleInferencePipeline
-    ):
+    async def test_infer_role_empty_goals(self, pipeline: RoleInferencePipeline):
         """Pipeline handles empty goals gracefully."""
         request = _make_request(goals=[])
         result = await pipeline.infer_role(request)
@@ -254,9 +246,7 @@ class TestRoleInferencePipeline:
         mock_llm: MockLLMProvider,
     ):
         """Falls back to OTHER for unrecognized role strings."""
-        mock_llm.set_default_response(
-            _mock_role_response("wizard", 0.8, "Magical role")
-        )
+        mock_llm.set_default_response(_mock_role_response("wizard", 0.8, "Magical role"))
         request = _make_request()
         result = await pipeline.infer_role(request)
 
@@ -269,11 +259,13 @@ class TestRoleInferencePipeline:
     ):
         """Confidence clamped to [0, 1] if LLM returns out-of-range."""
         mock_llm.set_default_response(
-            json.dumps({
-                "role": "guard",
-                "confidence": 1.5,
-                "reasoning": "Very confident",
-            })
+            json.dumps(
+                {
+                    "role": "guard",
+                    "confidence": 1.5,
+                    "reasoning": "Very confident",
+                }
+            )
         )
         request = _make_request()
         result = await pipeline.infer_role(request)
@@ -287,20 +279,20 @@ class TestRoleInferencePipeline:
     ):
         """Negative confidence is clamped to 0."""
         mock_llm.set_default_response(
-            json.dumps({
-                "role": "guard",
-                "confidence": -0.5,
-                "reasoning": "Unsure",
-            })
+            json.dumps(
+                {
+                    "role": "guard",
+                    "confidence": -0.5,
+                    "reasoning": "Unsure",
+                }
+            )
         )
         request = _make_request()
         result = await pipeline.infer_role(request)
 
         assert result.confidence == 0.0
 
-    async def test_infer_role_llm_error(
-        self, mock_llm: MockLLMProvider
-    ):
+    async def test_infer_role_llm_error(self, mock_llm: MockLLMProvider):
         """Returns fallback result when LLM raises an exception."""
 
         class FailingLLM:
@@ -362,9 +354,7 @@ class TestRoleInferencePipeline:
         assert results[2].agent_id == "a3"
         assert len(mock_llm.call_history) == 3
 
-    async def test_infer_roles_batch_empty(
-        self, pipeline: RoleInferencePipeline
-    ):
+    async def test_infer_roles_batch_empty(self, pipeline: RoleInferencePipeline):
         """Batch with empty list returns empty list."""
         results = await pipeline.infer_roles_batch([])
         assert results == []
@@ -396,10 +386,7 @@ class TestGetRoleDistribution:
         assert RoleInferencePipeline.get_role_distribution([]) == {}
 
     def test_distribution_single_role(self):
-        results = [
-            _result(f"a{i}", AgentRole.EXPLORER, 0.9)
-            for i in range(5)
-        ]
+        results = [_result(f"a{i}", AgentRole.EXPLORER, 0.9) for i in range(5)]
         dist = RoleInferencePipeline.get_role_distribution(results)
         assert dist == {"explorer": 1.0}
 
@@ -435,19 +422,11 @@ class TestRoleHistory:
         t2 = datetime(2024, 1, 1, 1, 0, tzinfo=UTC)
         t3 = datetime(2024, 1, 1, 2, 0, tzinfo=UTC)
 
-        history.add_result(
-            _result("a1", AgentRole.FARMER, 0.9, timestamp=t1)
-        )
-        history.add_result(
-            _result("a1", AgentRole.MINER, 0.8, timestamp=t2)
-        )
-        history.add_result(
-            _result("a1", AgentRole.MINER, 0.85, timestamp=t3)
-        )
+        history.add_result(_result("a1", AgentRole.FARMER, 0.9, timestamp=t1))
+        history.add_result(_result("a1", AgentRole.MINER, 0.8, timestamp=t2))
+        history.add_result(_result("a1", AgentRole.MINER, 0.85, timestamp=t3))
         # Different agent - should not appear
-        history.add_result(
-            _result("a2", AgentRole.GUARD, 0.7, timestamp=t2)
-        )
+        history.add_result(_result("a2", AgentRole.GUARD, 0.7, timestamp=t2))
 
         transitions = history.get_role_transitions("a1")
         assert len(transitions) == 3
@@ -464,12 +443,8 @@ class TestRoleHistory:
         t2 = datetime(2024, 1, 1, 1, 0, tzinfo=UTC)
 
         # Add in reverse order
-        history.add_result(
-            _result("a1", AgentRole.GUARD, 0.9, timestamp=t2)
-        )
-        history.add_result(
-            _result("a1", AgentRole.FARMER, 0.9, timestamp=t1)
-        )
+        history.add_result(_result("a1", AgentRole.GUARD, 0.9, timestamp=t2))
+        history.add_result(_result("a1", AgentRole.FARMER, 0.9, timestamp=t1))
 
         transitions = history.get_role_transitions("a1")
         assert transitions[0][0] < transitions[1][0]
@@ -480,10 +455,14 @@ class TestRoleHistory:
         """Persistence is 1.0 when role never changes."""
         base = datetime(2024, 1, 1, tzinfo=UTC)
         for i in range(5):
-            history.add_result(_result(
-                "a1", AgentRole.FARMER, 0.9,
-                timestamp=base + timedelta(hours=i),
-            ))
+            history.add_result(
+                _result(
+                    "a1",
+                    AgentRole.FARMER,
+                    0.9,
+                    timestamp=base + timedelta(hours=i),
+                )
+            )
 
         assert history.get_role_persistence("a1") == 1.0
 
@@ -491,14 +470,20 @@ class TestRoleHistory:
         """Persistence is 0.0 when role changes every step."""
         base = datetime(2024, 1, 1, tzinfo=UTC)
         roles = [
-            AgentRole.FARMER, AgentRole.MINER,
-            AgentRole.GUARD, AgentRole.EXPLORER,
+            AgentRole.FARMER,
+            AgentRole.MINER,
+            AgentRole.GUARD,
+            AgentRole.EXPLORER,
         ]
         for i, role in enumerate(roles):
-            history.add_result(_result(
-                "a1", role, 0.9,
-                timestamp=base + timedelta(hours=i),
-            ))
+            history.add_result(
+                _result(
+                    "a1",
+                    role,
+                    0.9,
+                    timestamp=base + timedelta(hours=i),
+                )
+            )
 
         assert history.get_role_persistence("a1") == 0.0
 
@@ -506,32 +491,39 @@ class TestRoleHistory:
         """Persistence reflects partial stability."""
         base = datetime(2024, 1, 1, tzinfo=UTC)
         # farmer, farmer, miner (2 transitions: 1 maintained, 1 changed)
-        history.add_result(_result(
-            "a1", AgentRole.FARMER, 0.9, timestamp=base,
-        ))
-        history.add_result(_result(
-            "a1", AgentRole.FARMER, 0.9,
-            timestamp=base + timedelta(hours=1),
-        ))
-        history.add_result(_result(
-            "a1", AgentRole.MINER, 0.9,
-            timestamp=base + timedelta(hours=2),
-        ))
+        history.add_result(
+            _result(
+                "a1",
+                AgentRole.FARMER,
+                0.9,
+                timestamp=base,
+            )
+        )
+        history.add_result(
+            _result(
+                "a1",
+                AgentRole.FARMER,
+                0.9,
+                timestamp=base + timedelta(hours=1),
+            )
+        )
+        history.add_result(
+            _result(
+                "a1",
+                AgentRole.MINER,
+                0.9,
+                timestamp=base + timedelta(hours=2),
+            )
+        )
 
         # 1 maintained out of 2 transitions = 0.5
         assert history.get_role_persistence("a1") == 0.5
 
-    def test_role_persistence_single_observation(
-        self, history: RoleHistory
-    ):
+    def test_role_persistence_single_observation(self, history: RoleHistory):
         """Single observation has perfect persistence."""
-        history.add_result(
-            _result("a1", AgentRole.FARMER, 0.9)
-        )
+        history.add_result(_result("a1", AgentRole.FARMER, 0.9))
         assert history.get_role_persistence("a1") == 1.0
 
-    def test_role_persistence_no_observations(
-        self, history: RoleHistory
-    ):
+    def test_role_persistence_no_observations(self, history: RoleHistory):
         """No observations means perfect persistence (trivially)."""
         assert history.get_role_persistence("unknown-agent") == 1.0

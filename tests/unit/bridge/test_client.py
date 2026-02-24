@@ -34,12 +34,14 @@ def _make_mock_context() -> MagicMock:
         sock.subscribe = MagicMock()
         sock.close = MagicMock()
         sock.send_string = AsyncMock()
-        sock.recv_json = AsyncMock(return_value={
-            "id": "test",
-            "success": True,
-            "data": {},
-            "error": None,
-        })
+        sock.recv_json = AsyncMock(
+            return_value={
+                "id": "test",
+                "success": True,
+                "data": {},
+                "error": None,
+            }
+        )
         sock.send_json = AsyncMock()
         return sock
 
@@ -113,12 +115,14 @@ class TestBridgeClientSendCommand:
     async def test_send_command_roundtrip(self, connected_client) -> None:
         """Command is sent and response received."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "test-id",
-            "success": True,
-            "data": {"moved": True},
-            "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "test-id",
+                "success": True,
+                "data": {"moved": True},
+                "error": None,
+            }
+        )
 
         cmd = BridgeCommand(action="move", params={"x": 1, "y": 2, "z": 3})
         resp = await client.send_command(cmd)
@@ -144,12 +148,14 @@ class TestBridgeClientSendCommand:
         client, cmd_mock, _ = connected_client
 
         cmd = BridgeCommand(action="ping", params={})
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": str(cmd.id),
-            "success": True,
-            "data": {},
-            "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": str(cmd.id),
+                "success": True,
+                "data": {},
+                "error": None,
+            }
+        )
 
         resp = await client.send_command(cmd)
         assert resp["id"] == str(cmd.id)
@@ -210,23 +216,27 @@ class TestPing:
     async def test_ping_success(self, connected_client) -> None:
         """Ping returns True when bridge responds with success=True."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "x",
-            "success": True,
-            "data": {"pong": True},
-            "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "x",
+                "success": True,
+                "data": {"pong": True},
+                "error": None,
+            }
+        )
         assert await client.ping() is True
 
     async def test_ping_returns_false_on_failure(self, connected_client) -> None:
         """Ping returns False when bridge responds with success=False."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "x",
-            "success": False,
-            "data": {},
-            "error": "unhealthy",
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "x",
+                "success": False,
+                "data": {},
+                "error": "unhealthy",
+            }
+        )
         assert await client.ping() is False
 
     async def test_ping_returns_false_on_timeout(self, connected_client) -> None:
@@ -250,9 +260,14 @@ class TestConvenienceMethods:
     async def test_move_to(self, connected_client) -> None:
         """move_to sends a 'move' action with x/y/z params."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "x", "success": True, "data": {"x": 10, "y": 64, "z": -5}, "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "x",
+                "success": True,
+                "data": {"x": 10, "y": 64, "z": -5},
+                "error": None,
+            }
+        )
         resp = await client.move_to(10, 64, -5)
         assert resp["data"]["x"] == 10
 
@@ -291,9 +306,14 @@ class TestConvenienceMethods:
     async def test_get_position(self, connected_client) -> None:
         """get_position sends a 'get_position' action."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "x", "success": True, "data": {"x": 1.5, "y": 65.0, "z": -2.3}, "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "x",
+                "success": True,
+                "data": {"x": 1.5, "y": 65.0, "z": -2.3},
+                "error": None,
+            }
+        )
         resp = await client.get_position()
         assert resp["data"]["y"] == 65.0
 
@@ -303,12 +323,14 @@ class TestConvenienceMethods:
     async def test_get_inventory(self, connected_client) -> None:
         """get_inventory sends a 'get_inventory' action."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "x",
-            "success": True,
-            "data": {"items": [{"name": "dirt", "count": 64}]},
-            "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "x",
+                "success": True,
+                "data": {"items": [{"name": "dirt", "count": 64}]},
+                "error": None,
+            }
+        )
         resp = await client.get_inventory()
         assert resp["data"]["items"][0]["name"] == "dirt"
 
@@ -416,9 +438,7 @@ class TestBridgeTypes:
 class TestBridgeClientEdgeCases:
     """Edge case tests for reconnection, errors, and edge conditions."""
 
-    async def test_reconnect_cmd_socket_creates_new_socket(
-        self, connected_client
-    ) -> None:
+    async def test_reconnect_cmd_socket_creates_new_socket(self, connected_client) -> None:
         """Reconnecting command socket creates a new socket object."""
         client, old_cmd_socket, _ = connected_client
         old_socket_id = id(old_cmd_socket)
@@ -444,12 +464,14 @@ class TestBridgeClientEdgeCases:
     async def test_send_command_with_empty_params(self, connected_client) -> None:
         """Commands with empty params dict are handled correctly."""
         client, cmd_mock, _ = connected_client
-        cmd_mock.recv_json = AsyncMock(return_value={
-            "id": "test",
-            "success": True,
-            "data": {},
-            "error": None,
-        })
+        cmd_mock.recv_json = AsyncMock(
+            return_value={
+                "id": "test",
+                "success": True,
+                "data": {},
+                "error": None,
+            }
+        )
 
         cmd = BridgeCommand(action="ping", params={})
         resp = await client.send_command(cmd)
@@ -459,9 +481,7 @@ class TestBridgeClientEdgeCases:
         payload = json.loads(payload_str)
         assert payload["params"] == {}
 
-    async def test_event_listener_error_continues_listening(
-        self, connected_client
-    ) -> None:
+    async def test_event_listener_error_continues_listening(self, connected_client) -> None:
         """Error in callback doesn't stop event listener."""
         client, _, sub_mock = connected_client
 
@@ -509,9 +529,7 @@ class TestBridgeClientEdgeCases:
         assert len(received) == 1
         assert received[0].data["message"] == "second"
 
-    async def test_event_listener_cancelled_stops_cleanly(
-        self, connected_client
-    ) -> None:
+    async def test_event_listener_cancelled_stops_cleanly(self, connected_client) -> None:
         """Cancelling event listener task stops it cleanly."""
         client, _, sub_mock = connected_client
 
@@ -536,9 +554,7 @@ class TestBridgeClientEdgeCases:
         assert client._event_task.done()
         assert len(received) == 0
 
-    async def test_convenience_methods_propagate_timeout(
-        self, connected_client
-    ) -> None:
+    async def test_convenience_methods_propagate_timeout(self, connected_client) -> None:
         """Timeout in convenience methods propagates TimeoutError."""
         client, cmd_mock, _ = connected_client
 
@@ -587,9 +603,7 @@ class TestBridgeClientEdgeCases:
         with pytest.raises(TimeoutError):
             await client.get_inventory()
 
-    async def test_reconnect_without_context_raises_error(
-        self, connected_client
-    ) -> None:
+    async def test_reconnect_without_context_raises_error(self, connected_client) -> None:
         """Reconnecting when context is None raises ConnectionError."""
         client, _, _ = connected_client
         client._ctx = None

@@ -107,9 +107,7 @@ async def run_n_ticks(scheduler: ModuleScheduler, sas: Any, n: int) -> None:
         await scheduler._execute_tick(sas)
 
 
-async def run_scheduler_for(
-    scheduler: ModuleScheduler, sas: Any, min_ticks: int
-) -> None:
+async def run_scheduler_for(scheduler: ModuleScheduler, sas: Any, min_ticks: int) -> None:
     """Start the scheduler, wait until at least min_ticks executed, then stop."""
     await scheduler.start(sas)
     while scheduler.tick_count < min_ticks:

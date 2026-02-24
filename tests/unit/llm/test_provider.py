@@ -22,6 +22,7 @@ from piano.llm.provider import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_litellm_response(
     content: str = "Hello",
     prompt_tokens: int = 10,
@@ -43,6 +44,7 @@ def _make_litellm_response(
 # Protocol conformance
 # ---------------------------------------------------------------------------
 
+
 class TestLLMProviderProtocol:
     def test_litellm_provider_is_llm_provider(self) -> None:
         provider = LiteLLMProvider()
@@ -52,6 +54,7 @@ class TestLLMProviderProtocol:
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
+
 
 class TestModelResolution:
     def test_uses_explicit_model(self) -> None:
@@ -85,6 +88,7 @@ class TestModelResolution:
 # Message building
 # ---------------------------------------------------------------------------
 
+
 class TestMessageBuilding:
     def test_user_only(self) -> None:
         provider = LiteLLMProvider()
@@ -104,6 +108,7 @@ class TestMessageBuilding:
 # ---------------------------------------------------------------------------
 # Completion
 # ---------------------------------------------------------------------------
+
 
 class TestCompletion:
     @pytest.mark.asyncio
@@ -191,6 +196,7 @@ class TestCompletion:
 # Retry behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestRetry:
     @pytest.mark.asyncio
     async def test_retries_on_failure_then_succeeds(self) -> None:
@@ -255,6 +261,7 @@ class TestRetry:
 # ---------------------------------------------------------------------------
 # Cost tracking and limits
 # ---------------------------------------------------------------------------
+
 
 class TestCostTracking:
     @pytest.mark.asyncio

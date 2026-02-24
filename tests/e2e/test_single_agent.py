@@ -3,6 +3,7 @@
 Runs a single agent for a small number of ticks and verifies
 that the basic simulation loop works end-to-end.
 """
+
 from __future__ import annotations
 
 import asyncio

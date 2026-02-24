@@ -2,6 +2,7 @@
 
 Tests system resilience against various failure modes.
 """
+
 from __future__ import annotations
 
 import time

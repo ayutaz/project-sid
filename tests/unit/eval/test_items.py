@@ -81,9 +81,9 @@ class TestMinecraftDependencyTree:
         assert MinecraftDependencyTree.get_depth("oak_log") < MinecraftDependencyTree.get_depth(
             "oak_planks"
         )
-        assert MinecraftDependencyTree.get_depth(
-            "oak_planks"
-        ) < MinecraftDependencyTree.get_depth("stick")
+        assert MinecraftDependencyTree.get_depth("oak_planks") < MinecraftDependencyTree.get_depth(
+            "stick"
+        )
         assert MinecraftDependencyTree.get_depth("stick") < MinecraftDependencyTree.get_depth(
             "wooden_pickaxe"
         )
@@ -364,9 +364,7 @@ class TestItemCollectionIntegration:
         time.sleep(0.01)
 
         # Stage 2: Craft basic items
-        benchmark.record_snapshot(
-            {"oak_log": 8, "dirt": 5, "oak_planks": 8, "crafting_table": 1}
-        )
+        benchmark.record_snapshot({"oak_log": 8, "dirt": 5, "oak_planks": 8, "crafting_table": 1})
         time.sleep(0.01)
 
         # Stage 3: Create tools

@@ -208,9 +208,7 @@ class TestVotingMetrics:
         voting = VotingMetrics()
         # Influenced agents vote yes
         for i in range(10):
-            voting.record_vote(
-                f"a{i}", "prop1", vote=True, influenced_by=["leader"]
-            )
+            voting.record_vote(f"a{i}", "prop1", vote=True, influenced_by=["leader"])
         # Uninfluenced agents vote no
         for i in range(10, 20):
             voting.record_vote(f"a{i}", "prop1", vote=False, influenced_by=[])
@@ -552,9 +550,7 @@ class TestGenerateGovernanceReport:
 class BehaviorRecordHelper:
     """Helper to record behaviours with explicit timestamps for window tests."""
 
-    def __init__(
-        self, cm: ConstitutionMetrics, rule_id: str, timestamp: datetime
-    ) -> None:
+    def __init__(self, cm: ConstitutionMetrics, rule_id: str, timestamp: datetime) -> None:
         self._cm = cm
         self._rule_id = rule_id
         self._timestamp = timestamp

@@ -185,9 +185,7 @@ class TestCognitiveControllerTick:
         assert "token_estimate" in result.data
         assert result.data["token_estimate"] > 0
 
-    async def test_tick_multiple_cycles(
-        self, controller: CognitiveController, mock_sas: MockSAS
-    ):
+    async def test_tick_multiple_cycles(self, controller: CognitiveController, mock_sas: MockSAS):
         await controller.tick(mock_sas)
         await controller.tick(mock_sas)
 

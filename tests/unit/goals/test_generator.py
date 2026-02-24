@@ -28,22 +28,24 @@ def mock_llm() -> AsyncMock:
     llm = AsyncMock()
     llm.complete = AsyncMock(
         return_value=LLMResponse(
-            content=json.dumps({
-                "goals": [
-                    {
-                        "description": "Gather wood from nearby trees",
-                        "category": "survival",
-                        "priority": 0.8,
-                        "estimated_difficulty": 0.3,
-                    },
-                    {
-                        "description": "Talk to nearby players",
-                        "category": "social",
-                        "priority": 0.5,
-                        "estimated_difficulty": 0.2,
-                    },
-                ]
-            }),
+            content=json.dumps(
+                {
+                    "goals": [
+                        {
+                            "description": "Gather wood from nearby trees",
+                            "category": "survival",
+                            "priority": 0.8,
+                            "estimated_difficulty": 0.3,
+                        },
+                        {
+                            "description": "Talk to nearby players",
+                            "category": "social",
+                            "priority": 0.5,
+                            "estimated_difficulty": 0.2,
+                        },
+                    ]
+                }
+            ),
             model="gpt-4o-mini",
         )
     )
@@ -331,9 +333,7 @@ class TestGoalGenerationModule:
         self, module: GoalGenerationModule, sas: InMemorySAS, mock_llm: AsyncMock
     ) -> None:
         """Invalid JSON from LLM is handled gracefully."""
-        mock_llm.complete.return_value = LLMResponse(
-            content="not valid json", model="gpt-4o-mini"
-        )
+        mock_llm.complete.return_value = LLMResponse(content="not valid json", model="gpt-4o-mini")
 
         result = await module.tick(sas)
 
@@ -403,9 +403,7 @@ class TestGoalGenerationWithContext:
         """Goal generation considers nearby players."""
         from piano.core.types import PerceptData
 
-        await sas.update_percepts(
-            PerceptData(nearby_players=["player1", "player2"])
-        )
+        await sas.update_percepts(PerceptData(nearby_players=["player1", "player2"]))
 
         await module.tick(sas)
 
@@ -420,9 +418,7 @@ class TestGoalGenerationWithContext:
         """Goal generation considers inventory state."""
         from piano.core.types import PerceptData
 
-        await sas.update_percepts(
-            PerceptData(inventory={"oak_log": 5, "iron_ore": 3})
-        )
+        await sas.update_percepts(PerceptData(inventory={"oak_log": 5, "iron_ore": 3}))
 
         await module.tick(sas)
 
@@ -473,16 +469,18 @@ class TestSocialGoalGeneration:
 
         # Mock LLM to return a social goal
         mock_llm.complete.return_value = LLMResponse(
-            content=json.dumps({
-                "goals": [
-                    {
-                        "description": "Greet nearby players",
-                        "category": "social",
-                        "priority": 0.7,
-                        "estimated_difficulty": 0.2,
-                    }
-                ]
-            }),
+            content=json.dumps(
+                {
+                    "goals": [
+                        {
+                            "description": "Greet nearby players",
+                            "category": "social",
+                            "priority": 0.7,
+                            "estimated_difficulty": 0.2,
+                        }
+                    ]
+                }
+            ),
             model="gpt-4o-mini",
         )
 

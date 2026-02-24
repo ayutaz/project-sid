@@ -3,6 +3,7 @@
 E2E tests are skipped by default. Run with --run-e2e flag:
     uv run pytest tests/e2e/ --run-e2e
 """
+
 from __future__ import annotations
 
 import pytest
@@ -23,9 +24,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip e2e tests unless --run-e2e is provided."""
     if config.getoption("--run-e2e"):
         return

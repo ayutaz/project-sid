@@ -96,9 +96,7 @@ class TestCacheStats:
 class TestPrefixCacheOptimizer:
     def test_normalize_whitespace(self) -> None:
         optimizer = PrefixCacheOptimizer()
-        result = optimizer.optimize_prompt(
-            _req(prompt="  hello   world  \n\n  foo  ")
-        )
+        result = optimizer.optimize_prompt(_req(prompt="  hello   world  \n\n  foo  "))
         assert result.prompt == "hello world foo"
 
     def test_normalize_system_prompt(self) -> None:
@@ -110,31 +108,21 @@ class TestPrefixCacheOptimizer:
 
     def test_prefix_hash_tracked(self) -> None:
         optimizer = PrefixCacheOptimizer()
-        optimizer.optimize_prompt(
-            _req(prompt="test", system_prompt="You are a Minecraft agent.")
-        )
+        optimizer.optimize_prompt(_req(prompt="test", system_prompt="You are a Minecraft agent."))
         stats = optimizer.get_prefix_stats()
         assert stats["unique_prefixes"] == 1
 
     def test_same_prefix_not_duplicated(self) -> None:
         optimizer = PrefixCacheOptimizer()
-        optimizer.optimize_prompt(
-            _req(prompt="test1", system_prompt="You are a helper.")
-        )
-        optimizer.optimize_prompt(
-            _req(prompt="test2", system_prompt="You are a helper.")
-        )
+        optimizer.optimize_prompt(_req(prompt="test1", system_prompt="You are a helper."))
+        optimizer.optimize_prompt(_req(prompt="test2", system_prompt="You are a helper."))
         stats = optimizer.get_prefix_stats()
         assert stats["unique_prefixes"] == 1
 
     def test_different_prefixes_tracked(self) -> None:
         optimizer = PrefixCacheOptimizer()
-        optimizer.optimize_prompt(
-            _req(prompt="test1", system_prompt="System A")
-        )
-        optimizer.optimize_prompt(
-            _req(prompt="test2", system_prompt="System B")
-        )
+        optimizer.optimize_prompt(_req(prompt="test1", system_prompt="System A"))
+        optimizer.optimize_prompt(_req(prompt="test2", system_prompt="System B"))
         stats = optimizer.get_prefix_stats()
         assert stats["unique_prefixes"] == 2
 
@@ -157,9 +145,7 @@ class TestPrefixCacheOptimizer:
 
     def test_clear(self) -> None:
         optimizer = PrefixCacheOptimizer()
-        optimizer.optimize_prompt(
-            _req(prompt="test", system_prompt="sys")
-        )
+        optimizer.optimize_prompt(_req(prompt="test", system_prompt="sys"))
         optimizer.clear()
         assert optimizer.get_prefix_stats()["unique_prefixes"] == 0
 

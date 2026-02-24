@@ -277,8 +277,7 @@ class TestConcurrencyLimiting:
         try:
             # Submit 10 requests
             tasks = [
-                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}")
-                for i in range(10)
+                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}") for i in range(10)
             ]
             await asyncio.gather(*tasks)
 
@@ -454,8 +453,7 @@ class TestDeduplication:
         try:
             # Submit different requests
             tasks = [
-                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}")
-                for i in range(5)
+                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}") for i in range(5)
             ]
             await asyncio.gather(*tasks)
 
@@ -522,9 +520,7 @@ class TestCostTracking:
                 await asyncio.sleep(0.1)
 
             # Check for warning in structlog output
-            assert any(
-                log.get("event") == "cost_threshold_exceeded" for log in cap_logs
-            )
+            assert any(log.get("event") == "cost_threshold_exceeded" for log in cap_logs)
             # Verify cost_exceeded flag is set
             assert gw._cost_exceeded is True
 
@@ -640,9 +636,7 @@ class TestGatewayLifecycle:
         with capture_logs() as cap_logs:
             await gw.start()  # Should warn
 
-        assert any(
-            log.get("event") == "gateway_already_running" for log in cap_logs
-        )
+        assert any(log.get("event") == "gateway_already_running" for log in cap_logs)
         await gw.stop()
 
     async def test_pending_count(self, mock_provider: AsyncMock) -> None:
@@ -659,8 +653,7 @@ class TestGatewayLifecycle:
         try:
             # Submit multiple requests
             tasks = [
-                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}")
-                for i in range(5)
+                gw.submit(LLMRequest(prompt=f"test {i}"), agent_id=f"agent-{i}") for i in range(5)
             ]
 
             # Check pending count while processing

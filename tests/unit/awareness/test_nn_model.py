@@ -414,9 +414,7 @@ class TestActionOutcomePredictor:
         """Action outcome predictor instance."""
         return ActionOutcomePredictor(nn, encoder)
 
-    def test_predict_outcome_returns_expected_keys(
-        self, predictor: ActionOutcomePredictor
-    ) -> None:
+    def test_predict_outcome_returns_expected_keys(self, predictor: ActionOutcomePredictor) -> None:
         """Test predict_outcome returns required keys."""
         state = {
             "percepts": {"position": {"x": 10, "y": 64, "z": 20}},
@@ -447,9 +445,7 @@ class TestActionOutcomePredictor:
         # Duration should be positive
         assert outcome["expected_duration"] >= 0
 
-    def test_calculate_discrepancy_identical(
-        self, predictor: ActionOutcomePredictor
-    ) -> None:
+    def test_calculate_discrepancy_identical(self, predictor: ActionOutcomePredictor) -> None:
         """Test discrepancy is 0 for identical outcomes."""
         predicted = {
             "success_probability": 1.0,
@@ -466,9 +462,7 @@ class TestActionOutcomePredictor:
         # Should be very close to 0 (identical)
         assert discrepancy < 0.1
 
-    def test_calculate_discrepancy_very_different(
-        self, predictor: ActionOutcomePredictor
-    ) -> None:
+    def test_calculate_discrepancy_very_different(self, predictor: ActionOutcomePredictor) -> None:
         """Test discrepancy is high for very different outcomes."""
         predicted = {
             "success_probability": 1.0,
@@ -486,9 +480,7 @@ class TestActionOutcomePredictor:
         # Should be high (very different)
         assert discrepancy > 0.5
 
-    def test_calculate_discrepancy_partial_match(
-        self, predictor: ActionOutcomePredictor
-    ) -> None:
+    def test_calculate_discrepancy_partial_match(self, predictor: ActionOutcomePredictor) -> None:
         """Test discrepancy for partial match."""
         predicted = {
             "success_probability": 0.8,
@@ -505,9 +497,7 @@ class TestActionOutcomePredictor:
         # Should be moderate (some difference)
         assert 0.0 < discrepancy < 0.5
 
-    def test_calculate_discrepancy_empty_actual(
-        self, predictor: ActionOutcomePredictor
-    ) -> None:
+    def test_calculate_discrepancy_empty_actual(self, predictor: ActionOutcomePredictor) -> None:
         """Test discrepancy when actual outcome has no data."""
         predicted = {
             "success_probability": 0.8,
@@ -631,9 +621,7 @@ class TestNNActionAwarenessModule:
     ) -> None:
         """Test module correctly reads from SAS."""
         # Setup SAS state
-        sas._action_history = [
-            ActionHistoryEntry(action="craft", success=True)
-        ]
+        sas._action_history = [ActionHistoryEntry(action="craft", success=True)]
         sas._percepts = PerceptData(
             inventory={"wooden_pickaxe": 1},
             position={"x": 10, "y": 64, "z": 20},

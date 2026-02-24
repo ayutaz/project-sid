@@ -75,9 +75,7 @@ class TestNetworkXScale:
             )
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 1.0, (
-            f"get_relationship took {elapsed:.3f}s (limit: 1.0s)"
-        )
+        assert elapsed < 1.0, f"get_relationship took {elapsed:.3f}s (limit: 1.0s)"
 
     def test_100_agent_pagerank(self) -> None:
         """PageRank on 100-agent graph should complete within 1 second."""
@@ -99,7 +97,5 @@ class TestNetworkXScale:
         communities = graph.get_communities()
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 1.0, (
-            f"Community detection took {elapsed:.3f}s (limit: 1.0s)"
-        )
+        assert elapsed < 1.0, f"Community detection took {elapsed:.3f}s (limit: 1.0s)"
         assert len(communities) >= 1

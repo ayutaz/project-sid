@@ -258,9 +258,7 @@ class TestLTMRetrievalQueryBuilding:
     async def test_build_queries_from_nearby_agents(self) -> None:
         """Should build queries for nearby agents."""
         sas = InMemorySAS()
-        await sas.update_percepts(
-            PerceptData(nearby_players=["alice", "bob", "charlie"])
-        )
+        await sas.update_percepts(PerceptData(nearby_players=["alice", "bob", "charlie"]))
 
         store = MockLTMStore()
         module = LTMRetrievalModule(store)
@@ -402,8 +400,7 @@ class TestLTMRetrievalTick:
 
         # Create many memories
         memories = [
-            _ltm_entry(f"memory {i}", category="semantic", importance=0.5)
-            for i in range(20)
+            _ltm_entry(f"memory {i}", category="semantic", importance=0.5) for i in range(20)
         ]
         store = MockLTMStore(preset_memories=memories)
         module = LTMRetrievalModule(store, max_memories_per_tick=3)
@@ -521,6 +518,7 @@ class TestLTMRetrievalTick:
     @pytest.mark.asyncio
     async def test_tick_error_handling(self) -> None:
         """Tick should handle errors gracefully."""
+
         class FailingStore:
             async def search(self, agent_id, query_embedding, **kwargs):
                 raise RuntimeError("Search failed")
@@ -563,9 +561,10 @@ class TestLTMRetrievalCategoryFiltering:
         wm = await sas.get_working_memory()
         ltm_entries = [e for e in wm if e.category == "ltm_retrieval"]
         for e in ltm_entries:
-            assert e.metadata.get("original_category") != "social" or e.metadata.get(
-                "original_category"
-            ) is None
+            assert (
+                e.metadata.get("original_category") != "social"
+                or e.metadata.get("original_category") is None
+            )
 
     @pytest.mark.asyncio
     async def test_category_filter_social(self) -> None:

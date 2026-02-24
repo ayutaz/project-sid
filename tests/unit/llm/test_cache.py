@@ -16,6 +16,7 @@ from piano.llm.provider import LLMProvider
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _req(prompt: str = "hello", **kwargs: object) -> LLMRequest:
     return LLMRequest(prompt=prompt, **kwargs)  # type: ignore[arg-type]
 
@@ -27,6 +28,7 @@ def _resp(content: str = "world") -> LLMResponse:
 # ---------------------------------------------------------------------------
 # LLMCache tests
 # ---------------------------------------------------------------------------
+
 
 class TestLLMCacheBasic:
     def test_miss_returns_none(self) -> None:
@@ -128,6 +130,7 @@ class TestLLMCacheTTL:
 # ---------------------------------------------------------------------------
 # CachedLLMProvider tests
 # ---------------------------------------------------------------------------
+
 
 class TestCachedLLMProvider:
     def test_implements_protocol(self) -> None:
