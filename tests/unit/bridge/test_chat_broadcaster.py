@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from piano.bridge.chat_broadcaster import ChatBroadcaster
-from piano.core.types import CCDecision, ModuleTier
+from piano.core.types import CCDecision, LLMResponse, ModuleTier
 from tests.helpers import InMemorySAS
 
 
@@ -135,3 +135,43 @@ class TestChatBroadcaster:
 
         # The lock ensures only one path sends the message
         assert mock_bridge.chat.await_count == 1
+
+    async def test_translate_to_japanese(
+        self, mock_bridge: AsyncMock, sas: InMemorySAS
+    ) -> None:
+        """When LLM is provided, chat messages are translated to Japanese."""
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(content="こんにちは皆さん!")
+        )
+        await sas.update_section("talking", _make_talking_section("Hello everyone!"))
+        cb = ChatBroadcaster(bridge=mock_bridge, sas=sas, llm=mock_llm)
+
+        await cb.tick(sas)
+
+        mock_llm.complete.assert_awaited_once()
+        mock_bridge.chat.assert_awaited_once_with("こんにちは皆さん!")
+
+    async def test_translate_failure_fallback(
+        self, mock_bridge: AsyncMock, sas: InMemorySAS
+    ) -> None:
+        """When translation fails, original English message is sent."""
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+        await sas.update_section("talking", _make_talking_section("Hello world"))
+        cb = ChatBroadcaster(bridge=mock_bridge, sas=sas, llm=mock_llm)
+
+        await cb.tick(sas)
+
+        mock_bridge.chat.assert_awaited_once_with("Hello world")
+
+    async def test_no_llm_skips_translation(
+        self, mock_bridge: AsyncMock, sas: InMemorySAS
+    ) -> None:
+        """When llm=None, messages are sent without translation."""
+        await sas.update_section("talking", _make_talking_section("Hi there"))
+        cb = ChatBroadcaster(bridge=mock_bridge, sas=sas, llm=None)
+
+        await cb.tick(sas)
+
+        mock_bridge.chat.assert_awaited_once_with("Hi there")

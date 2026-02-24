@@ -97,6 +97,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _configure_logging(level: str) -> None:
     """Configure structlog with the given level."""
+    # On Windows, stderr defaults to the locale encoding (e.g. cp932 for Japanese).
+    # LLM-generated text often contains Unicode characters (em dash, curly quotes, etc.)
+    # that cp932 cannot encode, causing UnicodeEncodeError in log output which then
+    # propagates as a module failure.  Reconfigure stderr to UTF-8 with replacement
+    # fallback so logging never raises on unencodable characters.
+    if _IS_WINDOWS and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(
         format="%(message)s",
         level=getattr(logging, level),
@@ -178,12 +185,16 @@ def _create_provider(args: argparse.Namespace, settings: PianoSettings | None = 
         provider = MockLLMProvider()
         _register_demo_responses(provider)
         return provider
+    import os
+
     from piano.llm.provider import OpenAIProvider
 
     if settings is not None:
         llm_cfg = settings.llm
+        # PIANO_LLM__API_KEY takes priority, then OPENAI_API_KEY env var
+        api_key = llm_cfg.api_key or os.environ.get("OPENAI_API_KEY") or None
         return OpenAIProvider(
-            api_key=llm_cfg.api_key or None,
+            api_key=api_key,
             cost_limit_usd=llm_cfg.cost_limit_usd,
             calls_per_minute_limit=llm_cfg.calls_per_minute_limit,
         )
@@ -435,7 +446,7 @@ def _register_modules(
         bm = cc.broadcast_manager
         bm.register(executor)
 
-        chat_broadcaster = ChatBroadcaster(bridge=bridge, sas=sas)
+        chat_broadcaster = ChatBroadcaster(bridge=bridge, sas=sas, llm=provider)
         agent.register_module(chat_broadcaster)
         bm.register(chat_broadcaster)
         bm.register(talking)
@@ -447,6 +458,12 @@ async def run(args: argparse.Namespace) -> None:
     Args:
         args: Parsed CLI arguments.
     """
+    # Load .env so that OPENAI_API_KEY and other vars are available as env vars
+    from dotenv import load_dotenv
+
+    env_path = args.config if args.config else ".env"
+    load_dotenv(env_path, override=False)
+
     settings_kwargs: dict[str, Any] = {}
     if args.config:
         import pathlib
