@@ -18,6 +18,7 @@ dependencies = [
     "qdrant-client>=1.7",
     "cryptography>=43.0",
     "pynacl>=1.5",
+    "tornado>=6.5.4",
 ]
 
 [project.optional-dependencies]

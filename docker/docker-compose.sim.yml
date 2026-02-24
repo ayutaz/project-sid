@@ -7,7 +7,7 @@ services:
     image: itzg/minecraft-server:latest
     environment:
       EULA: "TRUE"
-      TYPE: "PUFFERFISH"
+      TYPE: "PAPER"
       VERSION: "1.20.4"
       DIFFICULTY: "easy"
       SPAWN_MONSTERS: "false"
@@ -19,13 +19,11 @@ services:
       LEVEL_TYPE: "flat"
       SEED: "12345"
       MEMORY: "2G"
-      # Copy server properties if available
-      OVERRIDE_SERVER_PROPERTIES: "true"
     ports:
       - "25565:25565"
     volumes:
       - mc-data:/data
-      - ./mc-server/server.properties:/data/server.properties:ro
+      - ./mc-server/server.properties:/data/server.properties
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mc-health"]

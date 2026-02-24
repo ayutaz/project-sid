@@ -70,8 +70,7 @@ function buildHandlers(): Record<string, CommandHandler> {
 
     move: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
-      const mcData = require("minecraft-data")(bot.version);
-      const movements = new Movements(bot as any, mcData);
+      const movements = new Movements(bot);
       (bot as any).pathfinder.setMovements(movements);
       (bot as any).pathfinder.setGoal(
         new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z))
