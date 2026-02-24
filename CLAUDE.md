@@ -6,19 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Project Sid: Many-agent simulations toward AI civilization** の再現実装プロジェクト。Altera.ALの論文で提案された **PIANO（Parallel Information Aggregation via Neural Orchestration）** アーキテクチャを実装し、10〜1000以上のAIエージェントがMinecraft環境内で社会的に振る舞うシミュレーションの再現を目指す。
 
-**現在の状態**: Phase 2 実装完了（1,979テスト全通過、ruff lint clean）
+**現在の状態**: E2Eシミュレーション接続完了（2,079テスト全通過、ruff lint clean、MCサーバー実動作確認済み）
 
 ## リポジトリ構成
 
 ```
 src/piano/                  # PIANOアーキテクチャ実装
-  main.py, __main__.py      # CLIランチャー（--agents, --ticks, --mock-llm, --config）
+  main.py, __main__.py      # CLIランチャー（--agents, --ticks, --mock-llm, --config, --no-bridge）
   core/                     # 型定義、Module ABC、SAS ABC/Redis実装、Scheduler、Agent、Checkpoint、Orchestrator、DistributedCheckpoint
   cc/                       # 認知コントローラ（圧縮、ブロードキャスト、コントローラ）
   memory/                   # 記憶システム（WM、STM、Manager、LTM、LTM Search、Consolidation）
   llm/                      # LLM抽象化（LiteLLM、Mock、Cache、Tiering、Gateway、Local、MultiProvider、PromptCache）
-  bridge/                   # ZMQブリッジクライアント（CurveZMQ TLS対応）、プロトコル拡張、Velocityプロキシ
-  skills/                   # スキルレジストリ、基本/社会/高度スキル、エグゼキュータ
+  bridge/                   # ZMQブリッジ（client、perception、chat_broadcaster、manager、health、protocol、velocity）
+  skills/                   # スキルレジストリ、基本/社会/高度スキル、エグゼキュータ、ActionMapper
   awareness/                # 行動認識モジュール、NN予測モデル、トレーナー
   goals/                    # 目標生成モジュール
   planning/                 # 計画モジュール
@@ -29,20 +29,21 @@ src/piano/                  # PIANOアーキテクチャ実装
   scaling/                  # スケーリング（ワーカープール、スーパーバイザー、シャーディング、リソースリミッター）
   observability/            # 可観測性（構造化ログ、Prometheusメトリクス、トレーシング）
   testing/                  # 障害注入フレームワーク（Redis/Bridge/LLM/Agent障害シミュレータ）
-  config/                   # PianoSettings（pydantic-settings、TLS設定対応）
+  config/                   # PianoSettings（pydantic-settings、TLS設定、BridgeSettings対応）
 
-tests/                      # テストスイート（1,979テスト）
+tests/                      # テストスイート（2,079テスト）
   unit/                     # ユニットテスト（全モジュール）
-  integration/              # 統合テスト（agent lifecycle、Phase 1/2 smoke、障害注入、NetworkXスケール）
+  integration/              # 統合テスト（agent lifecycle、Phase 1/2 smoke、障害注入、NetworkXスケール、simulation flow）
   e2e/                      # E2Eテスト（--run-e2eフラグで有効化）
   helpers.py                # InMemorySAS、DummyModule
 
 benchmarks/                 # NetworkXスケーラビリティベンチマーク（10/50/100/500体）
-bridge/                     # TypeScript Mineflayer bot（ZMQ REP+PUB、CurveZMQ TLS対応）
-docker/                     # docker-compose.yml、docker-compose.phase2.yml、grafana/、prometheus/、certs/、redis/
+bridge/                     # TypeScript Mineflayer bot（ZMQ REP+PUB、CurveZMQ TLS対応、マルチボットlauncher）
+  src/                      # index.ts、launcher.ts、handlers/{basic,social,combat,advanced,perception}.ts
+docker/                     # docker-compose.yml、docker-compose.phase2.yml、docker-compose.sim.yml、Dockerfile.agent、Dockerfile.bridge
 k8s/                        # Kubernetesマニフェスト（namespace、redis-cluster、agent-worker、llm-gateway、minecraft-shard、monitoring、network-policies）
 docs/implementation/        # 技術調査・設計ドキュメント（17ファイル）
-.github/workflows/          # GitHub Actions CI（ci.yml + phase1.yml + phase2.yml）
+.github/workflows/          # GitHub Actions CI（ci.yml + phase1.yml + phase2.yml + e2e.yml）
 ```
 
 ## 開発コマンド
@@ -56,9 +57,16 @@ uv add <package>            # 本体依存
 uv add --dev <package>      # 開発依存
 
 # シミュレーション起動
-uv run piano --agents 1 --ticks 10 --mock-llm     # MockLLMで1体10tick
+uv run piano --agents 1 --ticks 10 --mock-llm     # MockLLMで1体10tick（bridgeなし）
 uv run piano --agents 5 --ticks 100               # 5体100tick（要LLM API）
+uv run piano --agents 3 --ticks 50 --mock-llm     # 3体（bridge接続あり、要MCサーバー）
+uv run piano --agents 1 --ticks 5 --mock-llm --no-bridge  # bridgeなしモード明示
 uv run python -m piano --mock-llm                  # python -m でも起動可
+
+# E2Eシミュレーション（Docker MC + Bridge + Agent）
+docker compose -f docker/docker-compose.sim.yml up -d minecraft redis  # MC+Redis起動
+cd bridge && npm install && npx tsc && node dist/launcher.js           # Bridge起動
+uv run piano --agents 3 --ticks 50 --mock-llm                         # Agent実行
 
 # テスト実行
 uv run pytest tests/                    # 全テスト
@@ -89,7 +97,7 @@ docker compose -f docker/docker-compose.yml up -d
 - **記憶**: Qdrant（LTM ベクトル検索、HTTPS/API Key対応）
 - **社会グラフ**: NetworkX（DiGraph）
 - **ブリッジ**: ZMQ（REQ-REP + PUB-SUB、CurveZMQ TLS対応）
-- **MCサーバー**: Pufferfish + Velocity
+- **MCサーバー**: Paper 1.20.4（Docker環境）/ Pufferfish + Velocity（本番スケール）
 - **暗号化**: cryptography（TLS証明書）、PyNaCl（CurveZMQ）
 - **テスト**: pytest + pytest-asyncio（asyncio_mode = "auto"）、マーカー: integration, slow, benchmark, e2e, chaos
 - **lint**: ruff（E/W/F/I/N/UP/B/SIM/TCH/RUF）
@@ -100,7 +108,8 @@ docker compose -f docker/docker-compose.yml up -d
 - **モジュールはステートレス**: SAS（Shared Agent State）を介して読み書き
 - **3ティア実行**: FAST（毎tick）、MID（3tick毎）、SLOW（10tick毎）
 - **認知コントローラ（CC）**: GWT情報ボトルネック → 圧縮 → LLM判断 → ブロードキャスト
-- **ZMQブリッジ**: Python（制御）↔ TypeScript（Mineflayer）間のIPC
+- **ZMQブリッジ**: Python（制御）↔ TypeScript（Mineflayer）間のIPC、マルチボット対応
+- **E2Eループ**: BridgePerception → CC判断 → SkillExecutor/ChatBroadcaster → Bridge → MC
 - **LLMゲートウェイ**: 優先度キュー + 同時実行制限 + サーキットブレーカー
 - **記憶三層**: WM（即座）→ STM（短期100件）→ LTM（Qdrant永続化、忘却曲線付き検索）
 - **社会認知**: Big Five性格 + 感情追跡（valence-arousal）+ 社会グラフ（PageRank影響度）
@@ -111,8 +120,12 @@ docker compose -f docker/docker-compose.yml up -d
 - 論文: [arXiv:2411.00114](https://arxiv.org/abs/2411.00114)
 - 技術調査: [docs/implementation/00-overview.md](docs/implementation/00-overview.md)
 - ロードマップ: [docs/implementation/roadmap.md](docs/implementation/roadmap.md)
+- E2Eアーキテクチャ: [docs/implementation/e2e-simulation.md](docs/implementation/e2e-simulation.md)
+- E2Eセットアップ: [docs/e2e-setup.md](docs/e2e-setup.md)
 
 ## 注意事項
 
 - 論文PDFは21MBと大きいため、内容確認にはページ指定での読み込みを推奨（`pages: "1-5"` など）
 - ブリッジテスト（ZMQ）はWindows上ではモックベースで実行（実ZMQソケットはハングする場合あり）
+- Windows上でZMQを実行するにはtornado>=6.1が必要（Proactor event loopの`add_reader`サポート）
+- Docker環境のMCサーバーはPAPERタイプを使用（PUFFERFISHはitzgイメージで変数未定義エラーが発生）

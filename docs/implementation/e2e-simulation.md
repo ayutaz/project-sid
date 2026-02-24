@@ -1,6 +1,7 @@
 # E2E Simulation Architecture
 
 > PIANO Agent-to-Minecraft E2E simulation connection architecture.
+> Status: **VERIFIED** — 3 bots x 5 ticks on Paper 1.20.4, MockLLM
 > Last updated: 2026-02-24
 
 ## Overview
@@ -152,7 +153,7 @@ See `docker/docker-compose.sim.yml` for full service definitions.
 
 | Service | Image | Purpose |
 |---------|-------|---------|
-| `minecraft` | `pufferfish:1.20.4` | Minecraft server (flat world) |
+| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Minecraft server (flat world) |
 | `redis` | `redis:7-alpine` | Shared Agent State (SAS) |
 | `bridge-N` | `piano-bridge` | TypeScript Mineflayer bot per agent |
 | `agent` | `piano-agent` | PIANO agent orchestrator |
@@ -216,6 +217,34 @@ grafana --query--> prometheus
 - LLM Gateway: request rate, latency, error rate, cost
 - Infrastructure: Redis memory, CPU, network
 
+## Platform Notes
+
+### Windows
+
+- ZMQ on Windows requires `tornado>=6.1` for Proactor event loop `add_reader` support
+- Install via: `uv add tornado`
+
+### Docker
+
+- MC server uses `itzg/minecraft-server` with TYPE=PAPER (not PUFFERFISH — itzg image has unbound variable issue)
+- `server.properties` must NOT be mounted read-only (MC server writes to it on startup)
+- Bridge Dockerfile uses `npm ci` + `npx tsc` for reproducible builds
+- Both agent and bridge Dockerfiles use non-root users for security
+
+## Verified Configuration
+
+The following configuration has been tested and confirmed working:
+
+| Component | Version/Config |
+|-----------|---------------|
+| MC Server | Paper 1.20.4 via itzg/minecraft-server |
+| World Type | flat, seed=12345 |
+| Bridge | Node.js 20, TypeScript compiled to dist/ |
+| Agent | Python 3.12, uv, MockLLMProvider |
+| Bots | 3 bots, ports 5555-5560 |
+| Ticks | 5 ticks, full Perception→CC→Action cycle |
+| Platform | Windows 11 (local bridge) + Docker (MC+Redis) |
+
 ## Related Documents
 
 - [00-overview.md](./00-overview.md) -- Architecture overview
@@ -223,3 +252,4 @@ grafana --query--> prometheus
 - [08-infrastructure.md](./08-infrastructure.md) -- Infrastructure and scaling
 - [10-devops.md](./10-devops.md) -- DevOps and operations
 - [roadmap.md](./roadmap.md) -- Implementation roadmap
+- [../e2e-setup.md](../e2e-setup.md) -- E2E setup guide

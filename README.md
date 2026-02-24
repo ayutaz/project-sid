@@ -14,13 +14,14 @@ AI agents have been evaluated in isolation or within small groups, where interac
 
 ## Project Status
 
-**Phase 0-2 Complete** — 1,979 tests passing, ruff lint clean. E2E validation (MC connection) pending.
+**Phase 0-2 + E2E Complete** — 2,079 tests passing, ruff lint clean. MC server E2E verified (3 bots, 5 ticks).
 
 | Phase | Status | Tests | Key Deliverables |
 |-------|--------|-------|------------------|
 | Phase 0: MVP | Done | 407 | SAS (Redis), Scheduler (3-tier), CC (template compression), WM/STM, LLM (LiteLLM+Mock), ZMQ Bridge, 7 Skills, Action Awareness, Config, Docker, CI |
 | Phase 1: Foundation | Done | 1,165 | Goal Generation, Planning, Talking, Self-Reflection, Social Awareness, Big Five Personality, Social Graph, Emotion Tracking, LTM (Qdrant), Memory Consolidation, Model Tiering, LLM Gateway, Local LLM, NN Action Awareness, Checkpoint, Orchestrator (10 agents), Social/Advanced Skills |
 | Phase 2: Scaling | Done | 1,979 | Worker Pool, Supervisor, Sharding, Resource Limiter, Multi-Provider LLM, Prompt Cache, Structured Logging, Prometheus Metrics, Tracing, Collective Intelligence, Influencer Analysis, Governance/Meme/Role Eval, Distributed Checkpoint, K8s Manifests, Network Policies, TLS (Redis/ZMQ/Qdrant), CLI Launcher, Fault Injection Framework, E2E Test Infrastructure, Grafana Alerts |
+| E2E Simulation | Done | 2,079 | BridgePerception, ChatBroadcaster, BridgeManager, HealthMonitor, ActionMapper, Multi-bot Launcher (TS), Docker Compose sim, MC server verified |
 | Phase 3: Civilization | Pending | - | Specialization, Collective Rules, Cultural Memes, Religious Propagation |
 
 See [docs/implementation/roadmap.md](docs/implementation/roadmap.md) for the full 4-phase plan.
@@ -52,7 +53,7 @@ uv run ruff check src/ tests/
 
 ```bash
 # Single agent with mock LLM (no external dependencies)
-uv run piano --agents 1 --ticks 10 --mock-llm
+uv run piano --agents 1 --ticks 10 --mock-llm --no-bridge
 
 # Multi-agent with real LLM (requires API key)
 uv run piano --agents 5 --ticks 100
@@ -60,6 +61,22 @@ uv run piano --agents 5 --ticks 100
 # Also works via python -m
 uv run python -m piano --mock-llm --ticks 10
 ```
+
+### E2E Simulation (with Minecraft)
+
+```bash
+# 1. Start MC server + Redis
+docker compose -f docker/docker-compose.sim.yml up -d minecraft redis
+
+# 2. Wait for MC server (~2 min), then start bridge
+cd bridge && npm install && npx tsc
+NUM_BOTS=3 MC_HOST=localhost node dist/launcher.js
+
+# 3. Run PIANO agents (in another terminal)
+uv run piano --agents 3 --ticks 50 --mock-llm
+```
+
+See [docs/e2e-setup.md](docs/e2e-setup.md) for detailed setup instructions.
 
 ### Docker Services
 
@@ -69,6 +86,9 @@ docker compose -f docker/docker-compose.yml up -d
 
 # Start Phase 2 stack (Redis + Qdrant + Prometheus + Grafana)
 docker compose -f docker/docker-compose.phase2.yml up -d
+
+# Start E2E simulation stack (MC + Redis + Bridge + Agent)
+docker compose -f docker/docker-compose.sim.yml up -d
 ```
 
 ## Architecture
@@ -99,7 +119,7 @@ docker compose -f docker/docker-compose.phase2.yml up -d
                │ ZMQ Bridge
     ┌──────────▼──────────┐
     │  Minecraft Server   │
-    │  (Pufferfish)       │
+    │  (Paper 1.20.4)     │
     │  via Mineflayer     │
     └─────────────────────┘
 ```
@@ -114,7 +134,7 @@ docker compose -f docker/docker-compose.phase2.yml up -d
 | LLM | LiteLLM (multi-provider) |
 | Bridge | ZMQ (pyzmq / zeromq.js) |
 | Vector DB | Qdrant |
-| MC Server | Pufferfish + Velocity |
+| MC Server | Paper 1.20.4 (Docker) / Pufferfish + Velocity (production) |
 | Testing | pytest + pytest-asyncio |
 | TLS/Crypto | cryptography, PyNaCl (CurveZMQ) |
 | Lint | ruff |
@@ -135,7 +155,11 @@ Detailed technical documentation is available in [docs/implementation/](docs/imp
 - [08-infrastructure.md](docs/implementation/08-infrastructure.md) - Infrastructure and scaling
 - [09-evaluation.md](docs/implementation/09-evaluation.md) - Evaluation and benchmarks
 - [10-devops.md](docs/implementation/10-devops.md) - DevOps workflow
+- [e2e-simulation.md](docs/implementation/e2e-simulation.md) - E2E simulation architecture
 - [roadmap.md](docs/implementation/roadmap.md) - Implementation roadmap
+
+Setup guides:
+- [docs/e2e-setup.md](docs/e2e-setup.md) - E2E simulation setup guide
 
 ## Paper
 

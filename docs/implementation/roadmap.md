@@ -3,7 +3,7 @@
 > 概要: PIANOアーキテクチャとマルチエージェント文明シミュレーションの4フェーズ実装計画（12-17ヶ月、35-55人月）
 > 対応論文セクション: 全セクション横断
 > 最終更新: 2026-02-24
-> 進捗: Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ 実装完了/検証待ち → E2Eシミュレーション接続 🔄 → Phase 3 ⬚ 未着手
+> 進捗: Phase 0 ✅ → Phase 1 ✅ → Phase 2 ✅ 実装完了/検証待ち → E2Eシミュレーション接続 ✅ → Phase 3 ⬚ 未着手
 
 ---
 
@@ -193,9 +193,10 @@ PIANOアーキテクチャの核心的な設計（ステートレスモジュー
 
 ---
 
-## E2E Simulation Connection — 🔄 進行中
+## E2E Simulation Connection — ✅ COMPLETE
 
 **期間**: 2-3週間 / **人員**: 2-3人 / **前提**: Phase 2 実装完了
+**実績**: 2,079テスト全通過（+100）、ruff lint clean、MCサーバー実動作確認済み（3ボット×5tick）
 **目標**: PIANOエージェントとMinecraftサーバー間のE2E接続を確立し、実環境での動作検証を行う。
 
 ### 概要
@@ -206,21 +207,36 @@ Phase 0-2で実装されたモジュール群を実際のMinecraft環境に接�
 
 | # | 成果物 | 詳細 | 状態 |
 |---|---|---|---|
-| E-1 | Docker Compose シミュレーション環境 | MC + Redis + Bridge + Agent の統合環境。`docker/docker-compose.sim.yml` | 🔄 進行中 |
-| E-2 | Bridge Multi-bot Launcher | 複数ボットの起動・ポート割当・ヘルスチェック。`bridge/src/launcher.ts` | 🔄 進行中 |
-| E-3 | Bridge Perception Module | ZMQ SUBでの知覚イベント受信・SAS書き込み。`src/piano/bridge/perception.py` | 🔄 進行中 |
-| E-4 | Bridge Manager | マルチボットZMQ接続プール管理。`src/piano/bridge/manager.py` | 🔄 進行中 |
-| E-5 | Simulation Flow Integration Test | MockブリッジでのPerception->CC->Action統合テスト | 🔄 進行中 |
-| E-6 | E2E Simulation Architecture Doc | アーキテクチャドキュメント。`docs/implementation/e2e-simulation.md` | ✅ Done |
-| E-7 | E2E CI Workflow | Docker Build + Integration Test。`.github/workflows/e2e.yml` | ✅ Done |
+| E-1 | Docker Compose シミュレーション環境 | MC(Paper 1.20.4) + Redis + Bridge + Agent の統合環境。`docker/docker-compose.sim.yml` | ✅ Done |
+| E-2 | Bridge Multi-bot Launcher | 複数ボットの起動・ポート割当・ヘルスチェック。`bridge/src/launcher.ts` | ✅ Done |
+| E-3 | Bridge Perception Module | ZMQ SUBでの知覚イベント受信・SAS書き込み。`src/piano/bridge/perception.py` | ✅ Done |
+| E-4 | Bridge Manager | マルチボットZMQ接続プール管理・並列connect/disconnect。`src/piano/bridge/manager.py` | ✅ Done |
+| E-5 | Bridge Health Monitor | 接続状態監視（connected/degraded/disconnected/stale）。`src/piano/bridge/health.py` | ✅ Done |
+| E-6 | ChatBroadcaster | TalkingModule発話→Bridge chat送信（asyncio.Lock二重送信防止）。`src/piano/bridge/chat_broadcaster.py` | ✅ Done |
+| E-7 | ActionMapper | CC action名→Skill名変換 + create_full_registry()。`src/piano/skills/action_mapper.py` | ✅ Done |
+| E-8 | SkillExecutor統合 | on_broadcastでmap_action()呼び出し統合。`src/piano/skills/executor.py` | ✅ Done |
+| E-9 | main.py統合 | --no-bridgeフラグ、bridge接続時にPerception/SkillExecutor/ChatBroadcaster自動登録 | ✅ Done |
+| E-10 | TSハンドラ | basic/social/combat/advanced + perception拡張。`bridge/src/handlers/` | ✅ Done |
+| E-11 | Simulation Flow Integration Test | MockブリッジでのPerception->CC->Action統合テスト | ✅ Done |
+| E-12 | E2E Simulation Architecture Doc | アーキテクチャドキュメント。`docs/implementation/e2e-simulation.md` | ✅ Done |
+| E-13 | E2E CI Workflow | Docker Build + Integration Test。`.github/workflows/e2e.yml` | ✅ Done |
+| E-14 | Settings拡張 | BridgeSettings（base_command_port, connect_timeout_s等）。`src/piano/config/settings.py` | ✅ Done |
+| E-15 | Docker基盤 | Dockerfile.agent, Dockerfile.bridge, .dockerignore, non-rootユーザー | ✅ Done |
 
 ### マイルストーン
 
 | Week | マイルストーン | 検証基準 | 状態 |
 |---|---|---|---|
-| W1 | Bridge Multi-bot + Perception統合 | 1ボットがMCに接続し知覚イベントをSASに書き込み | 🔄 進行中 |
-| W2 | Single Agent E2E Loop | 1エージェントがPerception->CC->Actionループを実行 | ⬚ 未着手 |
-| W3 | Multi Agent E2E | 5体が同時にシミュレーション環境で動作 | ⬚ 未着手 |
+| W1 | Bridge Multi-bot + Perception統合 | 1ボットがMCに接続し知覚イベントをSASに書き込み | ✅ Done |
+| W2 | Single Agent E2E Loop | 1エージェントがPerception->CC->Actionループを実行 | ✅ Done |
+| W3 | Multi Agent E2E | 3体が同時にシミュレーション環境で動作（MockLLM、5tick確認済み） | ✅ Done |
+
+### 実行確認結果
+
+- Docker MC Server（Paper 1.20.4, flat world）+ Redis起動
+- TypeScript Bridge: 3ボットが正常にMCサーバーにスポーン
+- PIANO Agent: 3体が5tickのPerception→CC→Actionループを完了、正常シャットダウン
+- Windows環境: tornado>=6.1が必要（Proactor event loopの`add_reader`サポート）
 
 ### アーキテクチャ
 

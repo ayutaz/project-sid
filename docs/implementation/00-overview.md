@@ -13,7 +13,7 @@
 1. **並行性（Concurrency）**: 高速反射モジュール（非LLM）と低速熟慮モジュール（LLM）が異なる速度で並列実行
 2. **一貫性（Coherence）**: 認知コントローラ（CC）がGWT情報ボトルネック+ブロードキャストで全モジュール間の一貫性を制御
 
-**現在の状態**: **Phase 2 実装完了**（検証待ち）。1,979テスト全通過、ruff lint clean。Phase 0コアモジュール + Phase 1全モジュール統合（10体動作） + Phase 2スケーリング基盤（50体対応） + 残タスク（CLIランチャー、TLS通信、K8s NetworkPolicy、NetworkXベンチマーク、障害注入テスト、E2Eテスト基盤、Grafanaアラート）が実装済み。次のステップはPhase 2 E2E検証（MC接続）およびPhase 3準備。
+**現在の状態**: **E2Eシミュレーション接続完了**。2,079テスト全通過、ruff lint clean。Phase 0コアモジュール + Phase 1全モジュール統合（10体動作） + Phase 2スケーリング基盤（50体対応） + E2Eシミュレーション接続（BridgePerception、ChatBroadcaster、BridgeManager、HealthMonitor、ActionMapper、マルチボットLauncher、Docker基盤）が実装済み。MCサーバー実動作確認済み（Paper 1.20.4、3ボット×5tick）。次のステップは言行一致改善率30%測定、大規模E2E検証（50体MC接続）、Phase 3準備。
 
 ---
 
@@ -34,10 +34,12 @@
 | 09 | [evaluation](./09-evaluation.md) | 文明的ベンチマーク4軸（専門化・統治・文化・インフラ）、評価パイプライン | ~2,350 |
 | 10 | [devops](./10-devops.md) | CI/CD、コンテナ化、モニタリング、実験管理、ログ戦略 | ~1,800 |
 
-### レビュー・計画
+### E2E・レビュー・計画
 
 | ファイル | 概要 |
 |---|---|
+| [e2e-simulation](./e2e-simulation.md) | E2Eシミュレーション接続アーキテクチャ（Perception→CC→Action→MC） |
+| [nn_action_awareness](./nn_action_awareness.md) | Action Awareness NN実装ガイド |
 | [review-comprehensive](./review-comprehensive.md) | 5観点の統合レビュー（セキュリティ・コスト・OSS・テスト・統合） |
 | [roadmap](./roadmap.md) | Phase 0-3 実装ロードマップ（12-17ヶ月、35-55人月） |
 
@@ -186,7 +188,7 @@
   - インフラ: Checkpoint/Restore, SAS Phase1 Mixin, Orchestrator(10エージェント管理)
   - スキル拡張: Social Skills(trade/gift/vote), Advanced Skills(craft chain/farming/combat)
   - ブリッジ拡張: Protocol extensions(batch commands, validation, serialization)
-- **完了**: Phase 2 実装（1,979テスト全通過、検証待ち）
+- **完了**: Phase 2 実装（1,979テスト全通過）
   - スケーリング: WorkerPool, Supervisor, Sharding, ResourceLimiter
   - 可観測性: 構造化ログ, Prometheusメトリクス, トレーシング
   - 社会認知拡張: CollectiveIntelligence, InfluencerAnalysis
@@ -195,16 +197,27 @@
   - ブリッジ拡張: VelocityProxy(マルチサーバー)
   - インフラ: DistributedCheckpoint, Kubernetes manifests, Grafana/Prometheus監視基盤
   - CI: Phase 2パイプライン
-  - CLIランチャー: `piano` コマンド（--agents, --ticks, --mock-llm, --config, --log-level）
+  - CLIランチャー: `piano` コマンド（--agents, --ticks, --mock-llm, --config, --log-level, --no-bridge）
   - TLS通信: Redis SSL, CurveZMQ(Python+TypeScript), Qdrant HTTPS/API Key
   - K8s NetworkPolicy: default-deny + コンポーネント間通信許可（11ポリシー）
   - NetworkXベンチマーク: 10/50/100/500体でのグラフ操作性能計測
   - 障害注入テスト: Redis/Bridge/LLM/Agent障害シミュレータ（chaos framework）
   - E2Eテスト基盤: --run-e2eフラグ、InMemorySAS使用の最小E2E
   - Grafanaアラート: コスト/エラー率/TPS/メモリの4種アラートルール
+- **完了**: E2Eシミュレーション接続（2,079テスト全通過、MCサーバー実動作確認済み）
+  - BridgePerceptionModule: Bridge PUB/SUBイベント→SAS PerceptData変換
+  - ChatBroadcaster: TalkingModule発話→Bridge chat送信（asyncio.Lock二重送信防止）
+  - BridgeManager: マルチBridgeClient管理（並列connect/disconnect/check）
+  - BridgeHealthMonitor: connected/degraded/disconnected/stale状態監視
+  - ActionMapper: CC action名→Skill名変換 + create_full_registry()
+  - SkillExecutor統合: on_broadcastでmap_action()呼び出し
+  - main.py統合: --no-bridgeフラグ、bridge接続時にPerception/SkillExecutor/ChatBroadcaster自動登録
+  - TSハンドラ: basic/social/combat/advanced + perception拡張 + launcher.ts（マルチボット）
+  - Docker: Dockerfile.agent, Dockerfile.bridge, docker-compose.sim.yml, .dockerignore, non-rootユーザー
+  - MC接続実証: Paper 1.20.4サーバーで3ボット×5tickの動作確認完了
 - **次のステップ**:
-  1. Phase 2 E2E検証（50体MC接続、スケーリング動作確認）
-  2. 言行一致改善率30%測定（品質ゲート）
+  1. 言行一致改善率30%測定（品質ゲート）
+  2. 大規模E2E検証（50体MC接続、スケーリング動作確認）
   3. Phase 3準備（500体規模、文明シミュレーション設計）
 
 ---
