@@ -14,6 +14,7 @@ import mineflayer, { Bot } from "mineflayer";
 import { pathfinder, Movements, goals } from "mineflayer-pathfinder";
 import * as zmq from "zeromq";
 import { v4 as uuidv4 } from "uuid";
+import { Vec3 } from "vec3";
 
 import { CommandHandler, BridgeEvent, McData } from "./types";
 import { getBasicHandlers } from "./handlers/basic";
@@ -71,7 +72,7 @@ function buildHandlers(mcData: McData): Record<string, CommandHandler> {
 
     move: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
-      const movements = new Movements(bot);
+      const movements = new Movements(bot, mcData);
       (bot as any).pathfinder.setMovements(movements);
       (bot as any).pathfinder.setGoal(
         new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z))
@@ -93,7 +94,7 @@ function buildHandlers(mcData: McData): Record<string, CommandHandler> {
     mine: async (bot, params) => {
       const { x, y, z } = params as { x: number; y: number; z: number };
       const block = bot.blockAt(
-        new (require("vec3").Vec3)(Math.floor(x), Math.floor(y), Math.floor(z))
+        new Vec3(Math.floor(x), Math.floor(y), Math.floor(z))
       );
       if (!block) {
         throw new Error(`No block at ${x},${y},${z}`);
@@ -123,9 +124,18 @@ function buildHandlers(mcData: McData): Record<string, CommandHandler> {
     },
 
     look: async (bot, params) => {
-      const { yaw, pitch } = params as { yaw: number; pitch: number };
-      await bot.look(yaw, pitch);
-      return { yaw, pitch };
+      const p = params as any;
+      if (p.x !== undefined && p.y !== undefined && p.z !== undefined) {
+        // Python側はx,y,z座標で送信する
+        await bot.lookAt(new Vec3(p.x, p.y, p.z));
+        return { x: p.x, y: p.y, z: p.z };
+      } else if (p.yaw !== undefined && p.pitch !== undefined) {
+        // 後方互換: yaw/pitchも引き続きサポート
+        await bot.look(p.yaw, p.pitch);
+        return { yaw: p.yaw, pitch: p.pitch };
+      } else {
+        return { success: false, error: "look requires {x,y,z} or {yaw,pitch}" };
+      }
     },
 
     get_position: async (bot) => {
@@ -169,6 +179,7 @@ export async function createBotBridge(
     port: config.mcPort,
     username: config.username,
     version: config.mcVersion,
+    auth: "offline",
   });
 
   bot.loadPlugin(pathfinder);
@@ -193,8 +204,14 @@ export async function createBotBridge(
     pubSocket.curvePublicKey = config.zmqCurveServerPublicKey ?? "";
   }
 
-  await repSocket.bind(zmqCmdAddr);
-  await pubSocket.bind(zmqEvtAddr);
+  try {
+    await repSocket.bind(zmqCmdAddr);
+    await pubSocket.bind(zmqEvtAddr);
+  } catch (bindError) {
+    console.error(`[bridge] Failed to bind ZMQ sockets: ${bindError}`);
+    bot.quit();
+    throw bindError;
+  }
   console.log(`[bridge] ZMQ REP bound on ${zmqCmdAddr}`);
   console.log(`[bridge] ZMQ PUB bound on ${zmqEvtAddr}`);
 
@@ -303,6 +320,7 @@ export async function createBotBridge(
   });
 
   bot.on("death", async () => {
+    console.log(`[bridge] Bot ${config.username} died, awaiting respawn...`);
     const event: BridgeEvent = {
       event_type: "death",
       data: {},
@@ -312,6 +330,16 @@ export async function createBotBridge(
       await pubSocket.send(JSON.stringify(event));
     } catch {
       // ignore
+    }
+  });
+
+  bot.on("spawn", () => {
+    console.log(`[bridge] Bot ${config.username} (re)spawned at ${bot.entity.position}`);
+    // Reset pathfinder goal on respawn to avoid stale navigation
+    try {
+      (bot as any).pathfinder.setGoal(null);
+    } catch {
+      // pathfinder may not be initialized yet on first spawn
     }
   });
 

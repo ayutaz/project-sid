@@ -60,7 +60,7 @@ class TestCraftItemSkill:
         result = await craft_item(bridge, "planks")
         assert result["success"] is True
         assert bridge.last_command is not None
-        assert bridge.last_command.params["item_name"] == "planks"
+        assert bridge.last_command.params["item"] == "planks"
         assert bridge.last_command.params["count"] == 1
 
     async def test_craft_item_custom_count(self, bridge: MockBridgeClient) -> None:

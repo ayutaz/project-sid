@@ -18,6 +18,11 @@ const IMPORTANT_BLOCKS = new Set([
   "anvil", "enchanting_table", "brewing_stand",
   "wheat", "carrots", "potatoes", "beetroots",
   "water", "lava",
+  // Basic resource blocks
+  "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log",
+  "stone", "cobblestone",
+  "dirt", "grass_block",
+  "sand", "gravel",
 ]);
 
 // Configurable scan radius via env var (default 4 for performance)
@@ -65,20 +70,25 @@ export function collectPerception(bot: Bot): Record<string, any> {
     }
   }
 
-  // Nearby entities (16 block range)
+  // Nearby entities (16 block range, sorted by distance)
   const nearbyEntities = Object.values(bot.entities)
     .filter(
       (e) =>
         e !== bot.entity &&
         e.position.distanceTo(bot.entity.position) < 16
     )
+    .sort((a, b) => {
+      const distA = a.position.distanceTo(bot.entity.position);
+      const distB = b.position.distanceTo(bot.entity.position);
+      return distA - distB;
+    })
+    .slice(0, 20) // Cap at 20 closest entities
     .map((e) => ({
       type: e.type,
       name: e.name ?? e.username ?? "unknown",
       distance: Math.round(e.position.distanceTo(bot.entity.position)),
       position: { x: e.position.x, y: e.position.y, z: e.position.z },
-    }))
-    .slice(0, 20); // Cap at 20 entities
+    }));
 
   // Full inventory
   const inventory = bot.inventory.items().map((i) => ({

@@ -2,11 +2,73 @@
 
 > Status: **VERIFIED** — Tested with 3 bots x 5 ticks on Paper 1.20.4
 
+> **Note**: You do **NOT** need to purchase Minecraft Java Edition to run this simulation.
+> The MC server runs as a Docker container (`itzg/minecraft-server`) which automatically
+> downloads and sets up Paper 1.20.4. Bots connect via Mineflayer (offline mode) without
+> requiring a Mojang/Microsoft account. `ONLINE_MODE=false` is configured by default.
+
 ## Prerequisites
 
-- Docker and Docker Compose
-- Python 3.12+ with uv
-- Node.js 20+ (for bridge)
+### Required Software
+
+| Tool | Version | Check Command | Install Link |
+|------|---------|---------------|--------------|
+| Python | 3.12+ | `python --version` | [python.org](https://www.python.org/downloads/) |
+| uv | latest | `uv --version` | [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| Node.js | 20+ | `node --version` | [nodejs.org](https://nodejs.org/) |
+| Docker | latest | `docker --version` | [docker.com](https://docs.docker.com/get-docker/) |
+| Docker Compose | v2+ | `docker compose version` | Included with Docker Desktop |
+
+### Windows-Specific Requirements
+
+- **Docker Desktop** with WSL2 backend enabled
+  - Enable WSL2: `wsl --install` in PowerShell (admin)
+  - Docker Desktop → Settings → General → Use the WSL2 based engine
+- **Windows Defender Firewall**: May prompt to allow Docker and Node.js on first run
+- **tornado** is required for ZMQ on Windows (already included in project dependencies)
+
+## Step 0: Repository Setup
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd project-sid
+
+# Install Python dependencies
+uv sync --dev
+
+# Install Bridge dependencies
+cd bridge
+npm install
+cd ..
+```
+
+## LLM Configuration
+
+### Option A: Mock LLM (Recommended for First Run)
+
+No API key needed. Agents will perform demo actions (explore, chat, mine):
+
+```bash
+uv run piano --agents 3 --ticks 50 --mock-llm
+```
+
+### Option B: OpenAI API
+
+For full AI-driven behavior, set your OpenAI API key:
+
+```bash
+# Linux/macOS
+export OPENAI_API_KEY="sk-..."
+
+# Windows PowerShell
+$env:OPENAI_API_KEY="sk-..."
+
+# Windows CMD
+set OPENAI_API_KEY=sk-...
+```
+
+**Cost estimate**: ~$0.35 per 100 ticks with 15 agents (gpt-4o-mini), ~$4.20 with gpt-4o for SLOW tier.
 
 ## Quick Start (Hybrid: Docker MC + Local Bridge/Agent)
 
@@ -33,6 +95,10 @@ npm install
 npx tsc
 NUM_BOTS=3 MC_HOST=localhost node dist/launcher.js
 ```
+
+> **Note on reproducible builds**: Use `npm ci` instead of `npm install` for CI/Docker
+> environments. `npm ci` installs exact versions from `package-lock.json` and ensures
+> reproducible builds.
 
 You should see:
 
@@ -131,14 +197,38 @@ For N bots, ports are allocated as:
 | `--config PATH` | Path to .env config file |
 | `--log-level LEVEL` | Log level: DEBUG, INFO, WARNING, ERROR |
 
+## Known Limitations
+
+### Flat World (Default)
+
+The default Docker configuration uses a **Superflat** world:
+- No trees, ores, or stone (only grass, dirt, bedrock)
+- `mine` command works only for grass/dirt blocks
+- `craft` and `smelt` require pre-placed resources or `/give` commands
+- Suitable for social simulation, movement, and chat testing
+
+### Combat
+
+- `spawn-monsters=false`: No hostile mobs spawn
+- `pvp=false`: Players cannot damage each other
+- Combat skills (`attack`, `defend`, `flee`) have limited testability
+
+### SAS Backend
+
+- Use `--no-bridge` to run without a Minecraft server connection
+- Default SAS backend tries Redis first, falls back to in-memory
+- Use `PIANO_REDIS__HOST` environment variable to configure Redis connection
+
 ## Troubleshooting
 
 ### Windows: ZMQ "Proactor event loop does not implement add_reader"
 
-Install tornado for async event loop support:
+The `tornado` package is required for async event loop support on Windows. It is already
+included in the project dependencies — no manual installation needed. If you see this error,
+verify your dependencies are up to date:
 
 ```bash
-uv add tornado
+uv sync --dev
 ```
 
 ### Bots not connecting to MC server

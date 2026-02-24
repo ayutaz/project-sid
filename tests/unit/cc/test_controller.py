@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from piano.cc.broadcast import BroadcastManager, BroadcastResult
-from piano.cc.controller import CC_SYSTEM_PROMPT, VALID_ACTIONS, CognitiveController
+from piano.cc.controller import CC_SYSTEM_PROMPT, CC_TIMEOUT, VALID_ACTIONS, CognitiveController
 from piano.core.types import CCDecision, LLMRequest, LLMResponse, ModuleResult, ModuleTier
 
 # -- Helpers / Fixtures -------------------------------------------------------
@@ -480,3 +480,112 @@ class TestBroadcastConcurrentModificationSafety:
         assert result.success_count == 1
         # The late_joiner was added during broadcast, now registered
         assert "late_joiner" in bm.listener_names
+
+
+class TestCCSystemPromptActionParams:
+    """Test that CC_SYSTEM_PROMPT includes action parameter specifications."""
+
+    def test_prompt_includes_action_params(self):
+        assert "Available actions and their required parameters:" in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_move_params(self):
+        assert '"x": number, "y": number, "z": number' in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_craft_params(self):
+        assert '"item": string, "count": number' in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_explore_params(self):
+        assert '"direction": string' in CC_SYSTEM_PROMPT
+        assert '"distance": number' in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_farm_params(self):
+        assert '"plant"|"harvest"' in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_chat_params(self):
+        assert '- chat: {"message": string}' in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_deposit_withdraw(self):
+        assert "- deposit:" in CC_SYSTEM_PROMPT
+        assert "- withdraw:" in CC_SYSTEM_PROMPT
+
+    def test_prompt_includes_send_message(self):
+        assert "- send_message:" in CC_SYSTEM_PROMPT
+
+
+class TestExtendedValidActions:
+    """Test that VALID_ACTIONS covers all necessary actions."""
+
+    def test_farm_actions_in_valid_actions(self):
+        assert "farm" in VALID_ACTIONS
+        assert "plant" in VALID_ACTIONS
+        assert "harvest" in VALID_ACTIONS
+
+    def test_social_actions_in_valid_actions(self):
+        assert "send_message" in VALID_ACTIONS
+        assert "unfollow" in VALID_ACTIONS
+        assert "request_help" in VALID_ACTIONS
+        assert "form_group" in VALID_ACTIONS
+        assert "leave_group" in VALID_ACTIONS
+
+    def test_chest_actions_in_valid_actions(self):
+        assert "deposit" in VALID_ACTIONS
+        assert "withdraw" in VALID_ACTIONS
+
+    def test_smelt_in_valid_actions(self):
+        assert "smelt" in VALID_ACTIONS
+
+
+class TestCCTimeout:
+    """Test CC_TIMEOUT constant."""
+
+    def test_cc_timeout_value(self):
+        assert CC_TIMEOUT == 45.0
+
+    def test_cc_timeout_greater_than_provider_default(self):
+        # Provider default is 30s, CC_TIMEOUT should be > 30s
+        assert CC_TIMEOUT > 30.0
+
+
+class TestFallbackEscalation:
+    """Test that consecutive fallbacks escalate to forced idle."""
+
+    async def test_escalation_after_max_consecutive_fallbacks(self, mock_sas: MockSAS):
+        cc = CognitiveController(llm=FailingLLM())
+
+        # First tick: error (no last_decision)
+        result1 = await cc.tick(mock_sas)
+        assert not result1.success
+        assert cc._consecutive_fallbacks == 1
+
+        # Set a last_decision manually so fallback returns success
+        cc._last_decision = CCDecision(action="mine", reasoning="prev")
+
+        # 2nd fallback
+        result2 = await cc.tick(mock_sas)
+        assert result2.success
+        assert result2.data.get("fallback") is True
+        assert cc._consecutive_fallbacks == 2
+
+        # 3rd fallback
+        result3 = await cc.tick(mock_sas)
+        assert result3.success
+        assert cc._consecutive_fallbacks == 3
+
+        # 4th fallback -> escalation (> max_consecutive_fallbacks=3)
+        result4 = await cc.tick(mock_sas)
+        assert result4.success
+        assert result4.data.get("escalated") is True
+        assert result4.data["action"] == "idle"
+        # Counter should be reset after escalation
+        assert cc._consecutive_fallbacks == 0
+
+    async def test_success_resets_consecutive_fallbacks(self, mock_sas: MockSAS):
+        good_llm = MockLLM()
+        cc = CognitiveController(llm=good_llm)
+
+        # Simulate some fallbacks
+        cc._consecutive_fallbacks = 2
+
+        # Successful tick should reset counter
+        await cc.tick(mock_sas)
+        assert cc._consecutive_fallbacks == 0

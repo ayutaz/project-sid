@@ -12,7 +12,9 @@ from piano.llm.mock import MockLLMProvider
 from piano.main import (
     _create_provider,
     _create_sas,
+    _health_check_loop,
     _install_shutdown_handler,
+    _register_demo_responses,
     _register_modules,
     _run_multi,
     _run_single,
@@ -32,6 +34,7 @@ class TestParseArgs:
         assert args.mock_llm is False
         assert args.config is None
         assert args.log_level == "INFO"
+        assert args.sas_backend == "auto"
 
     def test_agents_flag(self) -> None:
         args = parse_args(["--agents", "5"])
@@ -61,6 +64,18 @@ class TestParseArgs:
         args = parse_args([])
         assert args.no_bridge is False
 
+    def test_sas_backend_flag(self) -> None:
+        args = parse_args(["--sas-backend", "memory"])
+        assert args.sas_backend == "memory"
+
+    def test_sas_backend_redis(self) -> None:
+        args = parse_args(["--sas-backend", "redis"])
+        assert args.sas_backend == "redis"
+
+    def test_sas_backend_invalid(self) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--sas-backend", "invalid"])
+
     def test_all_flags_combined(self) -> None:
         args = parse_args(
             [
@@ -72,6 +87,8 @@ class TestParseArgs:
                 "--config",
                 "test.env",
                 "--no-bridge",
+                "--sas-backend",
+                "memory",
                 "--log-level",
                 "WARNING",
             ]
@@ -81,6 +98,7 @@ class TestParseArgs:
         assert args.mock_llm is True
         assert args.config == "test.env"
         assert args.no_bridge is True
+        assert args.sas_backend == "memory"
         assert args.log_level == "WARNING"
 
     def test_rejects_invalid_log_level(self) -> None:
@@ -329,24 +347,60 @@ class TestCreateProvider:
             assert isinstance(provider, OpenAIProvider)
 
 
-class TestCreateSasRedisFallback:
-    """Tests for Redis SAS fallback warning."""
+class TestCreateSas:
+    """Tests for _create_sas with sas_backend parameter."""
 
-    async def test_redis_fallback_logs_warning(self) -> None:
-        """When Redis is unavailable, _create_sas logs a warning and falls back."""
-        with patch("piano.main.logger") as mock_logger:
-            sas = _create_sas("test-agent", mock_mode=False)
-            # Should have logged a warning about Redis failure
-            if mock_logger.warning.called:
-                call_args = mock_logger.warning.call_args
-                assert "redis_sas_creation_failed" in str(call_args)
-            # Should return an in-memory SAS regardless
+    async def test_auto_fallback_logs_warning(self) -> None:
+        """When Redis is unavailable, auto mode logs a warning and falls back."""
+        mock_redis_cls = MagicMock()
+        mock_redis_cls.create_with_settings = MagicMock(
+            side_effect=ConnectionError("Redis down"),
+        )
+        with (
+            patch.dict(
+                "sys.modules",
+                {"piano.core.sas_redis": MagicMock(RedisSAS=mock_redis_cls)},
+            ),
+            patch("piano.main.logger") as mock_logger,
+        ):
+            sas = _create_sas("test-agent", sas_backend="auto")
+            mock_logger.warning.assert_called_once()
+            assert "redis_sas_creation_failed" in str(
+                mock_logger.warning.call_args,
+            )
             assert sas is not None
             assert sas.agent_id == "test-agent"
 
-    async def test_mock_mode_skips_redis(self) -> None:
-        """mock_mode=True never attempts Redis."""
-        sas = _create_sas("test-agent", mock_mode=True)
+    async def test_memory_backend_skips_redis(self) -> None:
+        """sas_backend='memory' never attempts Redis."""
+        sas = _create_sas("test-agent", sas_backend="memory")
+        assert sas is not None
+        assert sas.agent_id == "test-agent"
+
+    async def test_redis_backend_raises_on_failure(self) -> None:
+        """sas_backend='redis' raises when Redis is unavailable."""
+        mock_redis_cls = MagicMock()
+        mock_redis_cls.create_with_settings = MagicMock(
+            side_effect=ConnectionError("Redis down"),
+        )
+        with (
+            patch.dict(
+                "sys.modules",
+                {"piano.core.sas_redis": MagicMock(RedisSAS=mock_redis_cls)},
+            ),
+            pytest.raises(ConnectionError),
+        ):
+            _create_sas("test-agent", sas_backend="redis")
+
+    async def test_snapshot_includes_agent_id(self) -> None:
+        """_LocalSAS.snapshot() includes agent_id field."""
+        sas = _create_sas("test-agent", sas_backend="memory")
+        snap = await sas.snapshot()
+        assert snap["agent_id"] == "test-agent"
+
+    async def test_default_backend_is_auto(self) -> None:
+        """Default sas_backend is auto, falls back to memory."""
+        sas = _create_sas("test-agent", sas_backend="memory")
         assert sas is not None
         assert sas.agent_id == "test-agent"
 
@@ -395,3 +449,113 @@ class TestLogLevelFromSettings:
         args = parse_args(["--mock-llm", "--ticks", "1"])
         # Default --log-level is INFO, so settings.log.level should be checked
         assert args.log_level == "INFO"
+
+
+class TestRegisterDemoResponses:
+    """Tests for _register_demo_responses rotating mock responses."""
+
+    async def test_rotating_responses(self) -> None:
+        """Demo responses rotate through the list."""
+        mock = MockLLMProvider()
+        _register_demo_responses(mock)
+
+        r1 = await mock.complete("test")
+        r2 = await mock.complete("test")
+        assert r1 != r2  # different on successive calls
+
+    async def test_responses_are_valid_json(self) -> None:
+        """All demo responses are valid JSON with expected keys."""
+        import json
+
+        mock = MockLLMProvider()
+        _register_demo_responses(mock)
+
+        for _ in range(7):
+            resp = await mock.complete("test")
+            data = json.loads(resp)
+            assert "action" in data
+            assert "action_params" in data
+            assert "speaking" in data
+            assert "reasoning" in data
+
+    async def test_responses_wrap_around(self) -> None:
+        """After cycling all responses, wraps back to first."""
+        mock = MockLLMProvider()
+        _register_demo_responses(mock)
+
+        first = await mock.complete("test")
+        # Cycle through remaining 6
+        for _ in range(6):
+            await mock.complete("test")
+        eighth = await mock.complete("test")
+        assert first == eighth
+
+
+class TestCreateProviderWithDemoResponses:
+    """Tests for _create_provider registering demo responses."""
+
+    async def test_mock_provider_has_demo_responses(self) -> None:
+        """Mock provider from _create_provider has rotating responses."""
+        import json
+
+        args = parse_args(["--mock-llm"])
+        provider = _create_provider(args)
+        resp = await provider.complete("test")
+        data = json.loads(resp)
+        assert "action" in data
+
+
+class TestHealthCheckLoop:
+    """Tests for _health_check_loop."""
+
+    async def test_health_check_stops_on_shutdown(self) -> None:
+        """Health check loop exits when shutdown_event is set."""
+        from piano.bridge.health import BridgeHealthMonitor
+
+        mock_manager = MagicMock()
+        mock_manager.bridges = {}
+
+        monitor = BridgeHealthMonitor()
+        shutdown_event = asyncio.Event()
+
+        task = asyncio.create_task(
+            _health_check_loop(
+                monitor, mock_manager, shutdown_event, interval_s=0.05
+            )
+        )
+        await asyncio.sleep(0.1)
+        shutdown_event.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    async def test_health_check_survives_errors(self) -> None:
+        """Health check loop continues despite check_all errors."""
+        mock_monitor = MagicMock()
+        mock_monitor.check_all = AsyncMock(
+            side_effect=RuntimeError("check failed")
+        )
+
+        mock_manager = MagicMock()
+        mock_manager.bridges = {}
+
+        shutdown_event = asyncio.Event()
+
+        task = asyncio.create_task(
+            _health_check_loop(
+                mock_monitor, mock_manager, shutdown_event, interval_s=0.05
+            )
+        )
+        await asyncio.sleep(0.15)
+        shutdown_event.set()
+        await asyncio.wait_for(task, timeout=2.0)
+
+
+class TestSasBackendSetting:
+    """Tests for PianoSettings.sas_backend field."""
+
+    def test_default_sas_backend(self) -> None:
+        settings = PianoSettings()
+        assert settings.sas_backend == "auto"
+
+    def test_sas_backend_override(self) -> None:
+        settings = PianoSettings(sas_backend="memory")
+        assert settings.sas_backend == "memory"

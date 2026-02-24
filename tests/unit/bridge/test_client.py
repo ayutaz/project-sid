@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import zmq
 
-from piano.bridge.client import BridgeClient
+from piano.bridge.client import MAX_RETRIES, BridgeClient
 from piano.bridge.types import BridgeStatus
 from piano.core.types import BridgeCommand, BridgeEvent
 
@@ -185,6 +185,12 @@ class TestBridgeClientTimeout:
 
         client._reconnect_cmd_socket = fake_reconnect
 
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
+
         cmd = BridgeCommand(action="ping", params={})
         with pytest.raises(TimeoutError, match="timed out after"):
             await client.send_command(cmd)
@@ -202,6 +208,12 @@ class TestBridgeClientTimeout:
             client._status = BridgeStatus.CONNECTED
 
         client._reconnect_cmd_socket = tracking_reconnect
+
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
 
         cmd = BridgeCommand(action="ping", params={})
         with pytest.raises(TimeoutError):
@@ -250,6 +262,12 @@ class TestPing:
             client._status = BridgeStatus.CONNECTED
 
         client._reconnect_cmd_socket = fake_reconnect
+
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
 
         assert await client.ping() is False
 
@@ -568,6 +586,12 @@ class TestBridgeClientEdgeCases:
 
         client._reconnect_cmd_socket = fake_reconnect
 
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
+
         # Test move_to
         with pytest.raises(TimeoutError):
             await client.move_to(1, 2, 3)
@@ -622,6 +646,12 @@ class TestBridgeClientEdgeCases:
 
         client._reconnect_cmd_socket = fake_reconnect
 
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
+
         assert client.status == BridgeStatus.CONNECTED
 
         cmd = BridgeCommand(action="ping", params={})
@@ -667,6 +697,11 @@ class TestBridgeClientEdgeCases:
                 client._status = BridgeStatus.CONNECTED
 
             client._reconnect_cmd_socket = fake_reconnect
+
+            async def fake_reconnect_full() -> bool:
+                return False
+
+            client.reconnect = fake_reconnect_full
 
             cmd = BridgeCommand(action="ping", params={})
             with pytest.raises(TimeoutError):
@@ -720,19 +755,25 @@ class TestBridgeClientEdgeCases:
         cmd_mock.recv_json = AsyncMock(side_effect=zmq.Again("timeout"))
         client._reconnect_cmd_socket = tracking_reconnect
 
+        # Make auto-reconnect fail so TimeoutError is raised
+        async def fake_reconnect_full() -> bool:
+            return False
+
+        client.reconnect = fake_reconnect_full
+
         cmd = BridgeCommand(action="ping", params={})
         with pytest.raises(TimeoutError):
             await client.send_command(cmd)
 
         # Should have reconnected on every attempt (including the last one)
-        from piano.bridge.client import MAX_RETRIES
         assert reconnect_count == MAX_RETRIES
 
     async def test_event_listener_backoff_on_repeated_errors(self, connected_client) -> None:
-        """Event listener sleeps after 5 consecutive errors."""
+        """Event listener reconnects SUB socket after 5 consecutive errors."""
         client, _, sub_mock = connected_client
 
         call_count = 0
+        reconnect_called = False
 
         async def error_then_block() -> dict[str, Any]:
             nonlocal call_count
@@ -745,15 +786,23 @@ class TestBridgeClientEdgeCases:
 
         sub_mock.recv_json = error_then_block
 
+        async def tracking_evt_reconnect() -> None:
+            nonlocal reconnect_called
+            reconnect_called = True
+
+        client._reconnect_evt_socket = tracking_evt_reconnect
+
         async def on_event(event: BridgeEvent) -> None:
             pass  # pragma: no cover
 
         await client.start_event_listener(on_event)
-        # Wait for errors to accumulate and backoff to trigger
+        # Wait for errors to accumulate and reconnect to trigger
         await asyncio.sleep(1.5)
 
-        # Verify error counter incremented
-        assert client._evt_error_count >= 5
+        # Reconnect should have been triggered
+        assert reconnect_called is True
+        # Error count was reset after reconnect (may have additional errors after)
+        assert client._evt_error_count < 5
 
         # Clean up
         await client.stop_event_listener()
@@ -775,3 +824,248 @@ class TestBridgeClientEdgeCases:
             assert client._ctx is mock_ctx
             assert client.status == BridgeStatus.CONNECTED
             await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Dynamic per-command timeout
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicTimeout:
+    """Tests for per-command dynamic timeout via BridgeCommand.timeout_ms."""
+
+    async def test_send_command_applies_command_timeout(self, connected_client) -> None:
+        """send_command sets RCVTIMEO/SNDTIMEO to the command's timeout_ms."""
+        client, cmd_mock, _ = connected_client
+
+        cmd = BridgeCommand(action="move", params={"x": 1}, timeout_ms=30000)
+        await client.send_command(cmd)
+
+        # Check that setsockopt was called with the command's timeout
+        calls = cmd_mock.setsockopt.call_args_list
+        rcvtimeo_calls = [c for c in calls if c[0][0] == zmq.RCVTIMEO]
+        sndtimeo_calls = [c for c in calls if c[0][0] == zmq.SNDTIMEO]
+        # Last RCVTIMEO call should use 30000
+        assert rcvtimeo_calls[-1][0][1] == 30000
+        assert sndtimeo_calls[-1][0][1] == 30000
+
+    async def test_send_command_uses_client_default_when_zero(self, mock_ctx: MagicMock) -> None:
+        """If command timeout_ms is 0, falls back to client's default timeout."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient(timeout_ms=7000)
+            await client.connect()
+
+            cmd_mock = client._cmd_socket
+            cmd = BridgeCommand(action="ping", params={}, timeout_ms=0)
+            await client.send_command(cmd)
+
+            calls = cmd_mock.setsockopt.call_args_list
+            rcvtimeo_calls = [c for c in calls if c[0][0] == zmq.RCVTIMEO]
+            # Should use client default 7000 because cmd timeout_ms is 0 (falsy)
+            assert rcvtimeo_calls[-1][0][1] == 7000
+
+            await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Reconnect method
+# ---------------------------------------------------------------------------
+
+
+class TestReconnect:
+    """Tests for the reconnect() method."""
+
+    async def test_reconnect_when_disconnected(self, mock_ctx: MagicMock) -> None:
+        """reconnect() succeeds when status is DISCONNECTED."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient()
+            await client.connect()
+            # Simulate disconnected state
+            client._status = BridgeStatus.DISCONNECTED
+
+            result = await client.reconnect()
+            assert result is True
+            assert client.status == BridgeStatus.CONNECTED
+            await client.disconnect()
+
+    async def test_reconnect_when_connected_returns_false(self, connected_client) -> None:
+        """reconnect() returns False when already connected."""
+        client, _, _ = connected_client
+        result = await client.reconnect()
+        assert result is False
+
+    async def test_reconnect_failure_returns_false(self, mock_ctx: MagicMock) -> None:
+        """reconnect() returns False when connect() fails."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient()
+            client._status = BridgeStatus.DISCONNECTED
+            # Destroy context so connect() will fail
+            client._ctx = None
+
+            with patch("piano.bridge.client.zmq.asyncio.Context", side_effect=Exception("boom")):
+                result = await client.reconnect()
+
+            assert result is False
+
+    async def test_auto_reconnect_succeeds_and_retries(self, mock_ctx: MagicMock) -> None:
+        """After MAX_RETRIES, auto-reconnect succeeds and _send_once returns response."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient(timeout_ms=100)
+            await client.connect()
+            cmd_mock = client._cmd_socket
+
+            attempt_count = 0
+
+            async def fail_then_succeed(*args: Any, **kwargs: Any) -> None:
+                nonlocal attempt_count
+                attempt_count += 1
+                if attempt_count <= MAX_RETRIES:
+                    raise zmq.Again("timeout")
+
+            cmd_mock.send_string = AsyncMock(side_effect=fail_then_succeed)
+
+            async def fake_reconnect() -> None:
+                client._cmd_socket = cmd_mock
+                client._status = BridgeStatus.CONNECTED
+
+            client._reconnect_cmd_socket = fake_reconnect
+
+            cmd = BridgeCommand(action="ping", params={})
+            # Auto-reconnect succeeds and _send_once uses a new socket from connect()
+            resp = await client.send_command(cmd)
+            assert resp["success"] is True
+            # All MAX_RETRIES attempts failed on original socket
+            assert attempt_count == MAX_RETRIES
+
+            await client.disconnect()
+
+    async def test_auto_reconnect_fails_raises_timeout(self, mock_ctx: MagicMock) -> None:
+        """After MAX_RETRIES, if auto-reconnect fails, TimeoutError is raised."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient(timeout_ms=100)
+            await client.connect()
+            cmd_mock = client._cmd_socket
+            cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+            async def fake_reconnect() -> None:
+                client._cmd_socket = cmd_mock
+                client._status = BridgeStatus.CONNECTED
+
+            client._reconnect_cmd_socket = fake_reconnect
+
+            # Make reconnect() fail
+            async def reconnect_fail() -> bool:
+                return False
+
+            client.reconnect = reconnect_fail
+
+            cmd = BridgeCommand(action="ping", params={})
+            with pytest.raises(TimeoutError, match="timed out after"):
+                await client.send_command(cmd)
+
+            await client.disconnect()
+
+    async def test_auto_reconnect_send_once_fails(self, mock_ctx: MagicMock) -> None:
+        """After reconnect succeeds but _send_once fails, TimeoutError is raised."""
+        with patch("piano.bridge.client.zmq.asyncio.Context", return_value=mock_ctx):
+            client = BridgeClient(timeout_ms=100)
+            await client.connect()
+            cmd_mock = client._cmd_socket
+
+            # Always fail with zmq.Again
+            cmd_mock.send_string = AsyncMock(side_effect=zmq.Again("timeout"))
+
+            async def fake_reconnect() -> None:
+                client._cmd_socket = cmd_mock
+                client._status = BridgeStatus.CONNECTED
+
+            client._reconnect_cmd_socket = fake_reconnect
+
+            # Mock reconnect() to succeed but keep the failing cmd_socket
+            async def reconnect_keep_failing_socket() -> bool:
+                client._status = BridgeStatus.CONNECTED
+                client._cmd_socket = cmd_mock
+                return True
+
+            client.reconnect = reconnect_keep_failing_socket
+
+            cmd = BridgeCommand(action="ping", params={})
+            with pytest.raises(TimeoutError, match="after reconnect"):
+                await client.send_command(cmd)
+
+            await client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Tests: SUB socket reconnection
+# ---------------------------------------------------------------------------
+
+
+class TestSubSocketReconnect:
+    """Tests for SUB socket reconnection on consecutive errors."""
+
+    async def test_evt_socket_reconnects_after_consecutive_errors(
+        self, connected_client
+    ) -> None:
+        """After 5 consecutive errors, the SUB socket should be reconnected."""
+        client, _, sub_mock = connected_client
+
+        call_count = 0
+        reconnect_called = False
+
+        async def tracking_reconnect() -> None:
+            nonlocal reconnect_called
+            reconnect_called = True
+            # Don't actually reconnect in test, just track the call
+
+        client._reconnect_evt_socket = tracking_reconnect
+
+        async def error_then_block() -> dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 6:
+                raise RuntimeError("parse error")
+            await asyncio.sleep(999)
+            return {}  # pragma: no cover
+
+        sub_mock.recv_json = error_then_block
+
+        async def on_event(event: BridgeEvent) -> None:
+            pass  # pragma: no cover
+
+        await client.start_event_listener(on_event)
+        # Wait enough for errors to accumulate and reconnect to trigger
+        await asyncio.sleep(1.5)
+
+        assert reconnect_called is True
+        # Error count was reset after reconnect (may increment again from further errors)
+        assert client._evt_error_count < 5
+
+        await client.stop_event_listener()
+
+    async def test_reconnect_evt_socket_creates_new_socket(
+        self, connected_client
+    ) -> None:
+        """_reconnect_evt_socket creates a new SUB socket."""
+        client, _, old_sub = connected_client
+        old_id = id(old_sub)
+
+        await client._reconnect_evt_socket()
+
+        assert client._sub_socket is not None
+        assert id(client._sub_socket) != old_id
+        old_sub.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _pending field removed
+# ---------------------------------------------------------------------------
+
+
+class TestPendingFieldRemoved:
+    """Verify that the unused _pending field has been removed."""
+
+    def test_no_pending_attribute(self) -> None:
+        """BridgeClient no longer has a _pending attribute."""
+        client = BridgeClient()
+        assert not hasattr(client, "_pending")

@@ -12,7 +12,7 @@ from piano.main import _create_sas
 
 @pytest.fixture
 def sas():
-    return _create_sas("test-agent", mock_mode=True)
+    return _create_sas("test-agent", sas_backend="memory")
 
 
 @pytest.fixture

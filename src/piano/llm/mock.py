@@ -8,6 +8,47 @@ from __future__ import annotations
 
 from piano.core.types import LLMRequest, LLMResponse
 
+_DEMO_RESPONSES: list[str] = [
+    (
+        '{"action": "explore", "action_params": '
+        '{"direction": "north", "distance": 20}, '
+        '"speaking": "", "reasoning": "Exploring the area"}'
+    ),
+    (
+        '{"action": "explore", "action_params": '
+        '{"direction": "east", "distance": 15}, '
+        '"speaking": "Let me check over there", '
+        '"reasoning": "Curious about surroundings"}'
+    ),
+    (
+        '{"action": "chat", "action_params": '
+        '{"message": "Hello everyone!"}, '
+        '"speaking": "Hello everyone!", '
+        '"reasoning": "Being social"}'
+    ),
+    (
+        '{"action": "mine", "action_params": '
+        '{"x": 10, "y": 62, "z": 10}, '
+        '"speaking": "", "reasoning": "Mining nearby block"}'
+    ),
+    (
+        '{"action": "look", "action_params": '
+        '{"x": 0, "y": 64, "z": 0}, '
+        '"speaking": "", "reasoning": "Looking around"}'
+    ),
+    (
+        '{"action": "idle", "action_params": {}, '
+        '"speaking": "", '
+        '"reasoning": "Taking a moment to observe"}'
+    ),
+    (
+        '{"action": "chat", "action_params": '
+        '{"message": "What should we do?"}, '
+        '"speaking": "What should we do?", '
+        '"reasoning": "Engaging with others"}'
+    ),
+]
+
 
 class MockLLMProvider:
     """A mock LLM provider for unit and integration tests.
@@ -20,6 +61,16 @@ class MockLLMProvider:
         self._responses: list[tuple[str, str]] = []
         self._default_response: str = '{"action": "idle"}'
         self.call_history: list[LLMRequest] = []
+        self._demo_mode: bool = False
+        self._demo_responses: list[str] = _DEMO_RESPONSES
+        self._demo_index: int = 0
+
+    @classmethod
+    def create_demo_provider(cls) -> MockLLMProvider:
+        """Create a MockLLMProvider with diverse demo responses for E2E testing."""
+        provider = cls()
+        provider._demo_mode = True
+        return provider
 
     def add_response(self, prompt_pattern: str, response: str) -> None:
         """Register a response for prompts containing ``prompt_pattern``.
@@ -41,7 +92,8 @@ class MockLLMProvider:
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Return a matching pre-configured response.
 
-        Patterns are checked in registration order; the first match wins.
+        In demo mode, cycles through diverse demo responses. Otherwise,
+        patterns are checked in registration order; the first match wins.
         If no pattern matches, the default response is returned.
 
         Args:
@@ -51,6 +103,16 @@ class MockLLMProvider:
             An LLMResponse with zero latency and cost.
         """
         self.call_history.append(request)
+
+        if self._demo_mode:
+            idx = self._demo_index % len(self._demo_responses)
+            self._demo_index += 1
+            return LLMResponse(
+                content=self._demo_responses[idx],
+                model="mock-demo",
+                latency_ms=0.0,
+                cost_usd=0.0,
+            )
 
         for pattern, response_text in self._responses:
             if pattern in request.prompt:

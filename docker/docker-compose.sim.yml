@@ -4,7 +4,7 @@
 services:
   # Minecraft Server (Paper 1.20.4, flat world for bots)
   minecraft:
-    image: itzg/minecraft-server:latest
+    image: itzg/minecraft-server:latest  # TODO: Pin to specific version for reproducibility
     environment:
       EULA: "TRUE"
       TYPE: "PAPER"
@@ -24,6 +24,7 @@ services:
     volumes:
       - mc-data:/data
       - ./mc-server/bukkit.yml:/data/bukkit.yml
+      - ./mc-server/server.properties:/data/server.properties
     restart: unless-stopped
     deploy:
       resources:
@@ -87,6 +88,11 @@ services:
       - piano-sim
 
   # PIANO Agent
+  # Memory guidelines:
+  # - 3 agents (default): 512M sufficient
+  # - 10 agents: 1G recommended
+  # - 15 agents: 1.5-2G recommended
+  # Set AGENT_MEMORY=2G for large simulations
   agent:
     build:
       context: ..
@@ -111,7 +117,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: ${AGENT_MEMORY:-1G}
+        reservations:
+          memory: ${AGENT_MEMORY_RESERVATION:-256M}
     networks:
       - piano-sim
 

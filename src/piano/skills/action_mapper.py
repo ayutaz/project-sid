@@ -17,27 +17,49 @@ logger = structlog.get_logger()
 # CC action name -> SkillRegistry skill name
 # None means the action should be ignored (no skill to execute)
 ACTION_TO_SKILL: dict[str, str | None] = {
+    # Basic
     "move": "move_to",
     "mine": "mine_block",
     "craft": "craft_item",
-    "chat": "chat",
     "look": "look_at",
+    "chat": "chat",
     "get_position": "get_position",
     "get_inventory": "get_inventory",
-    "explore": "move_to",  # explore -> move_to with computed coords
-    "attack": "attack_entity",
-    "follow": "follow_agent",
-    "trade": "trade_items",
-    "gift": "gift_item",
-    "gather": "mine_block",
-    "dig": "mine_block",
+    # Advanced
+    "explore": "explore_direction",
     "place": "place_block",
+    "smelt": "smelt_item",
+    "build": "build_structure",
+    # Farming
+    "plant": "farm_plant",
+    "harvest": "farm_harvest",
+    "farm": "farm_plant",
+    # Item operations
     "equip": "equip_item",
     "use": "use_item",
     "drop": "drop_item",
-    "flee": "flee",
-    "build": "build_structure",
     "eat": "eat_food",
+    # Combat
+    "attack": "attack_entity",
+    "defend": "defend_self",
+    "flee": "flee",
+    # Social
+    "follow": "follow_agent",
+    "unfollow": "unfollow_agent",
+    "trade": "trade_items",
+    "gift": "gift_item",
+    "vote": "vote",
+    "send_message": "send_message",
+    "request_help": "request_help",
+    "form_group": "form_group",
+    "leave_group": "leave_group",
+    # Chest operations
+    "deposit": "deposit_items",
+    "withdraw": "withdraw_items",
+    # Aliases
+    "gather": "mine_block",
+    "dig": "mine_block",
+    # No-op actions
     "idle": None,
     "wait": None,
     "think": None,

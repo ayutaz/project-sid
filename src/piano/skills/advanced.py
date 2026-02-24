@@ -165,7 +165,7 @@ def craft_chain(
     commands.append(
         BridgeCommand(
             action="craft",
-            params={"item_name": target_item, "count": 1},
+            params={"item": target_item, "count": 1},
         )
     )
 
@@ -528,9 +528,51 @@ async def _async_withdraw_items(
     return await bridge.send_command(cmd)
 
 
-async def _async_generic(bridge: Any, **kwargs: Any) -> dict[str, Any]:
-    """Generic async wrapper for skills without specific bridge commands."""
-    return {"success": True, **kwargs}
+async def _async_equip_item(
+    bridge: Any,
+    item: str = "",
+    destination: str = "hand",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for equip_item that sends BridgeCommand."""
+    cmd = BridgeCommand(
+        action="equip",
+        params={"item": item, "destination": destination},
+    )
+    return await bridge.send_command(cmd)
+
+
+async def _async_use_item(bridge: Any, **kwargs: Any) -> dict[str, Any]:
+    """Async wrapper for use_item that sends BridgeCommand."""
+    cmd = BridgeCommand(action="use", params={})
+    return await bridge.send_command(cmd)
+
+
+async def _async_drop_item(
+    bridge: Any,
+    item: str = "",
+    count: int = 1,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for drop_item that sends BridgeCommand."""
+    cmd = BridgeCommand(
+        action="drop",
+        params={"item": item, "count": count},
+    )
+    return await bridge.send_command(cmd)
+
+
+async def _async_eat_food(
+    bridge: Any,
+    item: str = "",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Async wrapper for eat_food that sends BridgeCommand."""
+    cmd = BridgeCommand(
+        action="eat",
+        params={"item": item},
+    )
+    return await bridge.send_command(cmd)
 
 
 # --- Skill Registry ---
@@ -600,6 +642,12 @@ def register_advanced_skills(registry: SkillRegistry) -> None:
         description="Enter defensive stance",
     )
     registry.register(
+        "defend_self",
+        _async_defend,
+        params_schema={"shield": "bool"},
+        description="Enter defensive stance (alias)",
+    )
+    registry.register(
         "craft_chain_skill",
         _async_craft_chain,
         params_schema={"target_item": "str", "inventory": "dict"},
@@ -647,25 +695,25 @@ def register_advanced_skills(registry: SkillRegistry) -> None:
     )
     registry.register(
         "equip_item",
-        _async_generic,
-        params_schema={"item": "str"},
+        _async_equip_item,
+        params_schema={"item": "str", "destination": "str"},
         description="Equip an item",
     )
     registry.register(
         "use_item",
-        _async_generic,
-        params_schema={"item": "str"},
+        _async_use_item,
+        params_schema={},
         description="Use an item",
     )
     registry.register(
         "drop_item",
-        _async_generic,
-        params_schema={"item": "str"},
+        _async_drop_item,
+        params_schema={"item": "str", "count": "int"},
         description="Drop an item",
     )
     registry.register(
         "eat_food",
-        _async_generic,
+        _async_eat_food,
         params_schema={"item": "str"},
         description="Eat food",
     )

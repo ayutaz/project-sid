@@ -98,5 +98,41 @@ export function getSocialHandlers(mcData: McData): Record<string, CommandHandler
     return { voted: true, proposal_id, choice };
   };
 
-  return { trade, gift, follow, vote };
+  const unfollow: CommandHandler = async (bot, params) => {
+    (bot as any).pathfinder.setGoal(null);
+    return { success: true };
+  };
+
+  const send_message: CommandHandler = async (bot, params) => {
+    const { target, message } = params;
+    bot.chat(`/msg ${target} ${message}`);
+    return { success: true };
+  };
+
+  const request_help: CommandHandler = async (bot, params) => {
+    const { message, target } = params;
+    if (target) {
+      bot.chat(`/msg ${target} [HELP] ${message || "I need help!"}`);
+    } else {
+      bot.chat(`[HELP] ${message || "I need help!"}`);
+    }
+    return { success: true };
+  };
+
+  const form_group: CommandHandler = async (bot, params) => {
+    const { group_name, members } = params;
+    bot.chat(`[GROUP] Forming group "${group_name || "unnamed"}" with: ${(members || []).join(", ")}`);
+    return { success: true };
+  };
+
+  const leave_group: CommandHandler = async (bot, params) => {
+    const { group_name } = params;
+    bot.chat(`[GROUP] Leaving group "${group_name || "unnamed"}"`);
+    return { success: true };
+  };
+
+  return {
+    trade, gift, follow, vote,
+    unfollow, send_message, request_help, form_group, leave_group,
+  };
 }

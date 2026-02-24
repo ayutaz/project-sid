@@ -73,15 +73,15 @@ class TestCraftChain:
         commands = craft_chain("planks", {"log": 5})
         assert len(commands) == 1
         assert commands[0].action == "craft"
-        assert commands[0].params["item_name"] == "planks"
+        assert commands[0].params["item"] == "planks"
 
     def test_craft_chain_two_step(self) -> None:
         # Crafting sticks requires planks, which requires logs
         commands = craft_chain("stick", {"log": 1})
         # Should craft planks first, then sticks
         assert len(commands) >= 2
-        assert any(cmd.params.get("item_name") == "planks" for cmd in commands)
-        assert commands[-1].params["item_name"] == "stick"
+        assert any(cmd.params.get("item") == "planks" for cmd in commands)
+        assert commands[-1].params["item"] == "stick"
 
     def test_craft_chain_complex_item(self) -> None:
         # Crafting wooden pickaxe requires planks and sticks
@@ -89,7 +89,7 @@ class TestCraftChain:
         assert len(commands) >= 1
         # Final command should be crafting the pickaxe
         assert commands[-1].action == "craft"
-        assert commands[-1].params["item_name"] == "wooden_pickaxe"
+        assert commands[-1].params["item"] == "wooden_pickaxe"
 
     def test_craft_chain_with_partial_inventory(self) -> None:
         # Already have some materials
@@ -97,7 +97,7 @@ class TestCraftChain:
         commands = craft_chain("wooden_pickaxe", inventory)
         # Should only need to craft 1 more stick
         assert len(commands) >= 1
-        assert commands[-1].params["item_name"] == "wooden_pickaxe"
+        assert commands[-1].params["item"] == "wooden_pickaxe"
 
     def test_craft_chain_returns_bridge_commands(self) -> None:
         commands = craft_chain("stone_sword", {"cobblestone": 5, "log": 2})
@@ -130,14 +130,14 @@ class TestCraftChain:
         commands = craft_chain("wooden_pickaxe", {"planks": 10, "stick": 10}, max_depth=1)
         # Has all materials, so only needs the final craft
         assert len(commands) == 1
-        assert commands[0].params["item_name"] == "wooden_pickaxe"
+        assert commands[0].params["item"] == "wooden_pickaxe"
 
     def test_craft_chain_deep_recursion_limited(self) -> None:
         """Deep chain is limited by max_depth."""
         # stick needs planks, planks needs log. With max_depth=1, sub-crafts limited
         commands = craft_chain("stick", {}, max_depth=1)
         # Should still produce at least the stick craft itself
-        assert any(c.params["item_name"] == "stick" for c in commands)
+        assert any(c.params["item"] == "stick" for c in commands)
 
 
 class TestBuildStructure:
@@ -421,6 +421,154 @@ class TestRegisterAdvancedSkills:
         assert mock_bridge.commands[0].action == "attack"
 
 
+class TestEquipUseDropEatBridgeCommands:
+    """Tests that equip/use/drop/eat send actual BridgeCommands via bridge."""
+
+    async def test_equip_item_sends_bridge_command(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("equip_item")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, item="diamond_sword", destination="hand")
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "equip"
+        assert mock_bridge.commands[0].params["item"] == "diamond_sword"
+        assert mock_bridge.commands[0].params["destination"] == "hand"
+
+    async def test_use_item_sends_bridge_command(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("use_item")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge)
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "use"
+        assert mock_bridge.commands[0].params == {}
+
+    async def test_drop_item_sends_bridge_command(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("drop_item")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, item="cobblestone", count=32)
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "drop"
+        assert mock_bridge.commands[0].params["item"] == "cobblestone"
+        assert mock_bridge.commands[0].params["count"] == 32
+
+    async def test_eat_food_sends_bridge_command(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("eat_food")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, item="cooked_beef")
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "eat"
+        assert mock_bridge.commands[0].params["item"] == "cooked_beef"
+
+    async def test_equip_item_default_destination(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("equip_item")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, item="iron_pickaxe")
+        assert result["success"] is True
+        assert mock_bridge.commands[0].params["destination"] == "hand"
+
+    async def test_drop_item_default_count(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("drop_item")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, item="dirt")
+        assert result["success"] is True
+        assert mock_bridge.commands[0].params["count"] == 1
+
+
+class TestDefendSelfAlias:
+    def test_defend_self_registered(self) -> None:
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        assert "defend_self" in registry
+
+    async def test_defend_self_sends_bridge_command(self) -> None:
+        class _MockBridge:
+            def __init__(self) -> None:
+                self.commands: list[Any] = []
+
+            async def send_command(self, cmd: Any) -> dict[str, Any]:
+                self.commands.append(cmd)
+                return {"success": True}
+
+        registry = SkillRegistry()
+        register_advanced_skills(registry)
+        skill = registry.get("defend_self")
+
+        mock_bridge = _MockBridge()
+        result = await skill.execute_fn(mock_bridge, shield=True)
+        assert result["success"] is True
+        assert len(mock_bridge.commands) == 1
+        assert mock_bridge.commands[0].action == "defend"
+
+
 class TestIntegrationScenarios:
     def test_complete_tool_crafting_workflow(self) -> None:
         # Simulate crafting a stone pickaxe from scratch
@@ -430,7 +578,7 @@ class TestIntegrationScenarios:
         # Should produce commands to craft necessary items
         assert len(commands) >= 1
         assert isinstance(commands[-1], BridgeCommand)
-        assert commands[-1].params["item_name"] == "stone_pickaxe"
+        assert commands[-1].params["item"] == "stone_pickaxe"
 
     def test_building_wall_structure(self) -> None:
         # Build a simple 3-block wall

@@ -79,6 +79,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run without bridge connection (mock mode)",
     )
     parser.add_argument(
+        "--sas-backend",
+        type=str,
+        default="auto",
+        choices=["auto", "redis", "memory"],
+        help="SAS backend: auto (redis if available, else memory), redis, memory",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -129,6 +136,37 @@ def _install_shutdown_handler(shutdown_event: asyncio.Event) -> None:
                 loop.add_signal_handler(sig, _on_signal)
 
 
+def _register_demo_responses(mock: MockLLMProvider) -> None:
+    """Register diverse rotating demo response patterns for MockLLM."""
+    import json
+
+    templates = [
+        {"action": "explore", "action_params": {"direction": "north", "distance": 20},
+         "speaking": "", "reasoning": "Exploring the area"},
+        {"action": "explore", "action_params": {"direction": "east", "distance": 15},
+         "speaking": "Let me check what is over there", "reasoning": "Curious about surroundings"},
+        {"action": "chat", "action_params": {"message": "Hello everyone!"},
+         "speaking": "Hello everyone!", "reasoning": "Being social"},
+        {"action": "chat", "action_params": {"message": "Nice to meet you all"},
+         "speaking": "Nice to meet you all", "reasoning": "Greeting others"},
+        {"action": "mine", "action_params": {"x": 10, "y": 62, "z": 10},
+         "speaking": "", "reasoning": "Mining nearby block"},
+        {"action": "look", "action_params": {"x": 0, "y": 64, "z": 0},
+         "speaking": "", "reasoning": "Looking around"},
+        {"action": "idle", "action_params": {},
+         "speaking": "", "reasoning": "Taking a moment to observe"},
+    ]
+    demo_responses = [json.dumps(t) for t in templates]
+    call_count = [0]
+
+    async def _rotating_complete(prompt: str, **kwargs: Any) -> str:
+        idx = call_count[0] % len(demo_responses)
+        call_count[0] += 1
+        return demo_responses[idx]
+
+    mock.complete = _rotating_complete  # type: ignore[assignment]
+
+
 def _create_provider(args: argparse.Namespace, settings: PianoSettings | None = None) -> Any:
     """Create an LLM provider based on CLI flags.
 
@@ -137,7 +175,9 @@ def _create_provider(args: argparse.Namespace, settings: PianoSettings | None = 
         settings: Optional PianoSettings to configure the provider.
     """
     if args.mock_llm:
-        return MockLLMProvider()
+        provider = MockLLMProvider()
+        _register_demo_responses(provider)
+        return provider
     from piano.llm.provider import OpenAIProvider
 
     if settings is not None:
@@ -150,22 +190,51 @@ def _create_provider(args: argparse.Namespace, settings: PianoSettings | None = 
     return OpenAIProvider()
 
 
-def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:
+def _resolve_sas_backend(args: argparse.Namespace) -> str:
+    """Resolve effective SAS backend from CLI args.
+
+    When ``--sas-backend`` is explicitly set to ``redis`` or ``memory``,
+    that value is used.  When it is ``auto`` (the default) and
+    ``--mock-llm`` is active, ``memory`` is returned so that demo runs
+    do not require a Redis server.
+    """
+    backend = getattr(args, "sas_backend", "auto")
+    if backend != "auto":
+        return backend
+    if getattr(args, "mock_llm", False):
+        return "memory"
+    return "auto"
+
+
+def _create_sas(agent_id: str, *, sas_backend: str = "auto") -> Any:
     """Create a SAS instance for the given agent.
 
-    When *mock_mode* is ``False`` **and** Redis is reachable, returns a
-    ``RedisSAS``.  Otherwise falls back to a lightweight in-memory SAS.
+    Args:
+        agent_id: The agent identifier.
+        sas_backend: Backend selection - "auto", "redis", or "memory".
+            "auto": Try Redis, fall back to in-memory.
+            "redis": Use Redis, raise on failure.
+            "memory": Always use in-memory.
     """
-    if not mock_mode:
+    if sas_backend == "memory":
+        return _build_local_sas(agent_id)
+
+    if sas_backend in ("redis", "auto"):
         try:
             from piano.core.sas_redis import RedisSAS
 
             redis_settings = PianoSettings().redis
             return RedisSAS.create_with_settings(redis_settings, agent_id)
         except Exception as e:
+            if sas_backend == "redis":
+                raise
             logger.warning("redis_sas_creation_failed", error=str(e), fallback="in-memory")
 
-    # In-memory fallback (always used in mock mode)
+    return _build_local_sas(agent_id)
+
+
+def _build_local_sas(agent_id: str) -> Any:
+    """Build a lightweight in-memory SAS instance."""
     from piano.core.sas import SharedAgentState
     from piano.core.types import (
         ActionHistoryEntry,
@@ -261,6 +330,7 @@ def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:
 
         async def snapshot(self) -> dict[str, Any]:
             return {
+                "agent_id": self._id,
                 "percepts": self._percepts.model_dump(),
                 "goals": self._goals.model_dump(),
                 "social": self._social.model_dump(),
@@ -288,6 +358,27 @@ def _create_sas(agent_id: str, *, mock_mode: bool = True) -> Any:
             self._sections = {}
 
     return _LocalSAS(agent_id)
+
+
+async def _health_check_loop(
+    health_monitor: Any,
+    bridge_manager: Any,
+    shutdown_event: asyncio.Event,
+    interval_s: float = 10.0,
+) -> None:
+    """Periodic health check for bridge connections."""
+    while not shutdown_event.is_set():
+        try:
+            results = await health_monitor.check_all(bridge_manager.bridges)
+            summary = health_monitor.summary(results)
+            logger.debug("bridge_health_check", summary=summary)
+        except Exception as e:
+            logger.debug("bridge_health_check_error", error=str(e))
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=interval_s)
+            return
+        except TimeoutError:
+            pass
 
 
 def _register_modules(
@@ -388,7 +479,8 @@ async def _run_single(
     """Run a single-agent simulation."""
     agent_id = "agent-001"
     use_bridge = not getattr(args, "no_bridge", False)
-    sas = _create_sas(agent_id, mock_mode=args.mock_llm)
+    sas_backend = _resolve_sas_backend(args)
+    sas = _create_sas(agent_id, sas_backend=sas_backend)
     scheduler = ModuleScheduler(tick_interval=tick_interval)
     agent = Agent(agent_id=agent_id, sas=sas, scheduler=scheduler)
 
@@ -427,6 +519,16 @@ async def _run_single(
     shutdown_event = asyncio.Event()
     _install_shutdown_handler(shutdown_event)
 
+    # Start health monitor if bridge is connected
+    health_task: asyncio.Task[None] | None = None
+    if bridge_manager is not None and bridge_client is not None:
+        from piano.bridge.health import BridgeHealthMonitor
+
+        health_monitor = BridgeHealthMonitor()
+        health_task = asyncio.create_task(
+            _health_check_loop(health_monitor, bridge_manager, shutdown_event)
+        )
+
     run_task = asyncio.create_task(agent.run(max_ticks=args.ticks))
 
     _done, _ = await asyncio.wait(
@@ -439,6 +541,11 @@ async def _run_single(
         run_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await run_task
+
+    if health_task is not None and not health_task.done():
+        health_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await health_task
 
     if bridge_manager is not None:
         await bridge_manager.disconnect_all()
@@ -463,7 +570,7 @@ async def _run_multi(
         max_agents=args.agents,
         tick_interval=tick_interval,
     )
-    mock = args.mock_llm
+    sas_backend = _resolve_sas_backend(args)
     use_bridge = not getattr(args, "no_bridge", False)
 
     # Set up bridge manager if needed
@@ -488,7 +595,7 @@ async def _run_multi(
     sas_map: dict[str, Any] = {}
 
     def _sas_factory(aid: str) -> Any:
-        sas = _create_sas(aid, mock_mode=mock)
+        sas = _create_sas(aid, sas_backend=sas_backend)
         sas_map[aid] = sas
         return sas
 
@@ -511,8 +618,11 @@ async def _run_multi(
     bridge_connected = False
     if bridge_manager is not None:
         try:
-            await bridge_manager.connect_all()
-            bridge_connected = True
+            status = await bridge_manager.connect_all()
+            failed = [aid for aid, ok in status.items() if not ok]
+            if failed:
+                logger.warning("bridge_partial_connect_failure", failed_agents=failed)
+            bridge_connected = any(status.values())
         except Exception:
             logger.warning("Bridge connections failed, continuing without bridge")
 
@@ -533,6 +643,16 @@ async def _run_multi(
 
     shutdown_event = asyncio.Event()
     _install_shutdown_handler(shutdown_event)
+
+    # Start health monitor if bridge is connected
+    health_task: asyncio.Task[None] | None = None
+    if bridge_connected and bridge_manager is not None:
+        from piano.bridge.health import BridgeHealthMonitor
+
+        health_monitor = BridgeHealthMonitor()
+        health_task = asyncio.create_task(
+            _health_check_loop(health_monitor, bridge_manager, shutdown_event)
+        )
 
     # If --ticks is set, monitor agent tick counts and stop when all reach the target
     monitor_task: asyncio.Task[None] | None = None
@@ -557,6 +677,11 @@ async def _run_multi(
         monitor_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await monitor_task
+
+    if health_task is not None and not health_task.done():
+        health_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await health_task
 
     if bridge_manager is not None:
         await bridge_manager.disconnect_all()

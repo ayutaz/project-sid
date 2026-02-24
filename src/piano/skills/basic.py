@@ -71,7 +71,7 @@ async def craft_item(bridge: BridgeClient, item_name: str, count: int = 1) -> di
     Returns:
         Result dict with success status and crafted item data.
     """
-    cmd = BridgeCommand(action="craft", params={"item_name": item_name, "count": count})
+    cmd = BridgeCommand(action="craft", params={"item": item_name, "count": count})
     return await bridge.send_command(cmd)
 
 
@@ -158,7 +158,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register(
         "craft_item",
         craft_item,
-        params_schema={"item_name": "str", "count": "int"},
+        params_schema={"item": "str", "count": "int"},
         description="Craft an item by name",
     )
     registry.register(

@@ -38,6 +38,9 @@ VALID_ACTIONS: frozenset[str] = frozenset({
     "trade", "gift", "follow", "vote",
     "think", "observe",
     "dig", "gather",
+    "farm", "plant", "harvest",
+    "smelt", "deposit", "withdraw", "send_message",
+    "unfollow", "request_help", "form_group", "leave_group",
 })
 
 
@@ -48,19 +51,43 @@ You are the Cognitive Controller of an AI agent in a Minecraft world.
 Your role is to integrate the current situation and decide what the
 agent should do next.
 
-Valid actions: mine, move, chat, look, craft, build, explore, \
-get_position, get_inventory, idle, wait, attack, flee, defend, \
-place, equip, use, drop, eat, trade, gift, follow, vote, think, observe.
+Available actions and their required parameters:
+- idle: {} (no parameters, agent does nothing)
+- move: {"x": number, "y": number, "z": number}
+- mine: {"x": number, "y": number, "z": number}
+- craft: {"item": string, "count": number}
+- look: {"x": number, "y": number, "z": number}
+- chat: {"message": string}
+- explore: {"direction": string ("north"|"south"|"east"|"west"), "distance": number}
+- place: {"x": number, "y": number, "z": number, "block_type": string}
+- eat: {"item": string}
+- equip: {"item": string, "destination": string ("hand"|"head"|"torso"|"legs"|"feet")}
+- use: {}
+- drop: {"item": string, "count": number}
+- attack: {"target": string}
+- defend: {}
+- flee: {"from_x": number, "from_y": number, "from_z": number, "distance": number}
+- follow: {"target": string}
+- trade: {"target": string, "offer_items": [{"name": string, "count": number}]}
+- gift: {"target": string, "item": string, "count": number}
+- vote: {"proposal_id": string, "choice": string}
+- farm: {"action": "plant"|"harvest", "crop": str, "x": num, "y": num, "z": num}
+- deposit: {"x": number, "y": number, "z": number, "items": [{"name": string, "count": number}]}
+- withdraw: {"x": number, "y": number, "z": number, "items": [{"name": string, "count": number}]}
+- send_message: {"target": string, "message": string}
 
 Respond in JSON with the following keys:
 - "action": short verb describing the next action (e.g. "mine", "chat", "explore", "idle")
-- "action_params": object with optional parameters for the action
+- "action_params": object with parameters for the action (see above)
 - "speaking": string with what the agent should say, or null if silent
 - "reasoning": one-sentence rationale for your decision
 - "salience_scores": object mapping information categories to 0.0-1.0 importance
 
 Respond ONLY with the JSON object, no markdown fences.
 """
+
+# -- CC timeout (base 30s + 15s for provider retries) ----------------------
+CC_TIMEOUT: float = 45.0
 
 
 # -- Cognitive Controller --------------------------------------------------
@@ -92,6 +119,8 @@ class CognitiveController(Module):
         self._max_tokens = max_tokens
         self._last_decision: CCDecision | None = None
         self._cycle_count: int = 0
+        self._consecutive_fallbacks: int = 0
+        self._max_consecutive_fallbacks: int = 3
 
     # -- Module ABC implementation -----------------------------------------
 
@@ -138,6 +167,7 @@ class CognitiveController(Module):
 
         # 5. Store & broadcast
         self._last_decision = decision
+        self._consecutive_fallbacks = 0
         await sas.set_cc_decision(decision.model_dump(mode="json"))
 
         broadcast_result: BroadcastResult | None = None
@@ -174,7 +204,7 @@ class CognitiveController(Module):
             max_tokens=self._max_tokens,
             json_mode=True,
         )
-        return await asyncio.wait_for(self._llm.complete(request), timeout=30.0)
+        return await asyncio.wait_for(self._llm.complete(request), timeout=CC_TIMEOUT)
 
     def _parse_response(
         self,
@@ -241,7 +271,47 @@ class CognitiveController(Module):
         return {}
 
     async def _fallback_result(self, error_msg: str, sas: SharedAgentState) -> ModuleResult:
-        """Return a fallback result reusing the previous decision and broadcast it."""
+        """Return a fallback result reusing the previous decision and broadcast it.
+
+        After ``_max_consecutive_fallbacks`` consecutive fallbacks, escalates
+        to a forced idle decision to prevent the agent from being stuck.
+        """
+        self._consecutive_fallbacks += 1
+
+        if self._consecutive_fallbacks > self._max_consecutive_fallbacks:
+            # Escalation: force idle after too many consecutive fallbacks
+            logger.warning(
+                "Agent fallback escalation: %d consecutive fallbacks, forcing idle",
+                self._consecutive_fallbacks,
+            )
+            idle_decision = CCDecision(
+                action="idle",
+                action_params={},
+                speaking="",
+                reasoning="Fallback escalation to idle",
+            )
+            self._last_decision = idle_decision
+            self._consecutive_fallbacks = 0
+
+            if self._broadcast.listener_names:
+                try:
+                    await self._broadcast.broadcast(idle_decision)
+                except Exception as exc:
+                    logger.warning("Fallback escalation broadcast failed: %s", exc)
+
+            return ModuleResult(
+                module_name=self.name,
+                tier=self.tier,
+                data={
+                    "cycle_id": str(idle_decision.cycle_id),
+                    "action": "idle",
+                    "speaking": "",
+                    "fallback": True,
+                    "escalated": True,
+                    "error": error_msg,
+                },
+            )
+
         if self._last_decision is not None:
             # Broadcast the fallback decision so output modules still receive it
             if self._broadcast.listener_names:

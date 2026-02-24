@@ -187,6 +187,10 @@ class PianoSettings(BaseSettings):
         case_sensitive=False,
     )
 
+    sas_backend: str = Field(
+        default="auto",
+        description="SAS backend: auto (redis if available, else memory), redis, memory",
+    )
     redis: RedisSettings = Field(default_factory=RedisSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)

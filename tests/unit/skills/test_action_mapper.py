@@ -56,8 +56,8 @@ class TestMapAction:
     def test_map_trade_action(self) -> None:
         assert map_action("trade") == "trade_items"
 
-    def test_map_explore_aliases_move(self) -> None:
-        assert map_action("explore") == "move_to"
+    def test_map_explore_action(self) -> None:
+        assert map_action("explore") == "explore_direction"
 
     def test_action_to_skill_dict_has_none_for_noop_actions(self) -> None:
         noop_actions = ["idle", "wait", "think", "observe"]
@@ -100,6 +100,45 @@ class TestMapAction:
     def test_map_observe_returns_none(self) -> None:
         assert map_action("observe") is None
 
+    def test_map_smelt(self) -> None:
+        assert map_action("smelt") == "smelt_item"
+
+    def test_map_plant(self) -> None:
+        assert map_action("plant") == "farm_plant"
+
+    def test_map_harvest(self) -> None:
+        assert map_action("harvest") == "farm_harvest"
+
+    def test_map_farm_aliases_plant(self) -> None:
+        assert map_action("farm") == "farm_plant"
+
+    def test_map_defend(self) -> None:
+        assert map_action("defend") == "defend_self"
+
+    def test_map_unfollow(self) -> None:
+        assert map_action("unfollow") == "unfollow_agent"
+
+    def test_map_vote(self) -> None:
+        assert map_action("vote") == "vote"
+
+    def test_map_send_message(self) -> None:
+        assert map_action("send_message") == "send_message"
+
+    def test_map_request_help(self) -> None:
+        assert map_action("request_help") == "request_help"
+
+    def test_map_form_group(self) -> None:
+        assert map_action("form_group") == "form_group"
+
+    def test_map_leave_group(self) -> None:
+        assert map_action("leave_group") == "leave_group"
+
+    def test_map_deposit(self) -> None:
+        assert map_action("deposit") == "deposit_items"
+
+    def test_map_withdraw(self) -> None:
+        assert map_action("withdraw") == "withdraw_items"
+
 
 class TestCreateFullRegistry:
     def test_create_full_registry_has_basic_skills(self) -> None:
@@ -139,8 +178,8 @@ class TestCreateFullRegistry:
 
     def test_create_full_registry_total_count(self) -> None:
         registry = create_full_registry()
-        # 7 basic + 9 social + 16 advanced = 32
-        assert len(registry) == 32
+        # 7 basic + 9 social + 17 advanced = 33
+        assert len(registry) == 33
 
     def test_all_action_to_skill_values_registered(self) -> None:
         """Every non-None mapping in ACTION_TO_SKILL is present in the full registry."""

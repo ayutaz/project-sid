@@ -20,7 +20,7 @@ from piano.skills.executor import SkillExecutor
 
 @pytest.fixture
 def sas():
-    return _create_sas("test-agent", mock_mode=True)
+    return _create_sas("test-agent", sas_backend="memory")
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ class TestSimulationFlow:
         agents = []
         for i in range(3):
             agent_id = f"agent-{i + 1:03d}"
-            agent_sas = _create_sas(agent_id, mock_mode=True)
+            agent_sas = _create_sas(agent_id, sas_backend="memory")
             scheduler = ModuleScheduler(tick_interval=0.01)
             agent = Agent(agent_id=agent_id, sas=agent_sas, scheduler=scheduler)
             provider = MockLLMProvider()
@@ -157,7 +157,7 @@ class TestSimulationFlow:
 
     async def test_no_bridge_backward_compat(self):
         """Agents work without bridge (no-bridge mode)."""
-        sas = _create_sas("test-agent", mock_mode=True)
+        sas = _create_sas("test-agent", sas_backend="memory")
         scheduler = ModuleScheduler(tick_interval=0.01)
         agent = Agent(agent_id="test-agent", sas=sas, scheduler=scheduler)
         provider = MockLLMProvider()

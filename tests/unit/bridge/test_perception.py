@@ -285,6 +285,48 @@ async def test_position_validation_not_dict(
     assert percepts.position == original_pos  # unchanged
 
 
+async def test_inventory_list_aggregates_duplicate_items(
+    module: BridgePerceptionModule, sas: InMemorySAS
+) -> None:
+    """When inventory has the same item in multiple slots, counts should be summed."""
+    await module._on_event(
+        _make_event(
+            "perception",
+            {
+                "inventory": [
+                    {"name": "oak_planks", "count": 32},
+                    {"name": "oak_planks", "count": 16},
+                    {"name": "diamond", "count": 3},
+                    {"name": "oak_planks", "count": 8},
+                ]
+            },
+        )
+    )
+    await module.tick(sas)
+    percepts = await sas.get_percepts()
+    assert percepts.inventory == {"oak_planks": 56, "diamond": 3}
+
+
+async def test_inventory_list_default_count_one(
+    module: BridgePerceptionModule, sas: InMemorySAS
+) -> None:
+    """Items without a count field default to 1."""
+    await module._on_event(
+        _make_event(
+            "perception",
+            {
+                "inventory": [
+                    {"name": "stick"},
+                    {"name": "stick"},
+                ]
+            },
+        )
+    )
+    await module.tick(sas)
+    percepts = await sas.get_percepts()
+    assert percepts.inventory == {"stick": 2}
+
+
 async def test_shutdown_resets_listener_flag(
     module: BridgePerceptionModule, bridge: MagicMock
 ) -> None:

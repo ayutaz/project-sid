@@ -99,3 +99,68 @@ class TestCallHistory:
         mock = MockLLMProvider()
         with pytest.raises(AssertionError):
             mock.assert_called_with("anything")
+
+
+class TestDemoProvider:
+    """Tests for MockLLMProvider.create_demo_provider()."""
+
+    def test_create_demo_provider(self) -> None:
+        provider = MockLLMProvider.create_demo_provider()
+        assert provider._demo_mode is True
+        assert len(provider._demo_responses) > 0
+
+    @pytest.mark.asyncio
+    async def test_demo_cycles_through_responses(self) -> None:
+        provider = MockLLMProvider.create_demo_provider()
+        responses = []
+        for _ in range(len(provider._demo_responses)):
+            result = await provider.complete(LLMRequest(prompt="test"))
+            responses.append(result.content)
+
+        # Should have gotten each demo response exactly once
+        assert len(responses) == len(provider._demo_responses)
+        for i, resp in enumerate(responses):
+            assert resp == provider._demo_responses[i]
+
+    @pytest.mark.asyncio
+    async def test_demo_wraps_around(self) -> None:
+        provider = MockLLMProvider.create_demo_provider()
+        n = len(provider._demo_responses)
+        # Exhaust all, then get first one again
+        for _ in range(n):
+            await provider.complete(LLMRequest(prompt="test"))
+        result = await provider.complete(LLMRequest(prompt="test"))
+        assert result.content == provider._demo_responses[0]
+
+    @pytest.mark.asyncio
+    async def test_demo_model_name(self) -> None:
+        provider = MockLLMProvider.create_demo_provider()
+        result = await provider.complete(LLMRequest(prompt="test"))
+        assert result.model == "mock-demo"
+
+    @pytest.mark.asyncio
+    async def test_demo_records_call_history(self) -> None:
+        provider = MockLLMProvider.create_demo_provider()
+        await provider.complete(LLMRequest(prompt="hello"))
+        assert len(provider.call_history) == 1
+        assert provider.call_history[0].prompt == "hello"
+
+    @pytest.mark.asyncio
+    async def test_demo_responses_are_valid_json(self) -> None:
+        import json
+
+        provider = MockLLMProvider.create_demo_provider()
+        for _ in range(len(provider._demo_responses)):
+            result = await provider.complete(LLMRequest(prompt="test"))
+            data = json.loads(result.content)
+            assert "action" in data
+            assert "action_params" in data
+            assert "reasoning" in data
+
+    @pytest.mark.asyncio
+    async def test_non_demo_mode_unaffected(self) -> None:
+        """Normal provider should not use demo responses."""
+        provider = MockLLMProvider()
+        result = await provider.complete(LLMRequest(prompt="test"))
+        assert result.content == '{"action": "idle"}'
+        assert result.model == "mock"

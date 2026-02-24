@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections import deque
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
 from piano.core.module import Module
@@ -114,11 +114,11 @@ class BridgePerceptionModule(Module):
             if isinstance(inv, dict):
                 percepts.inventory = inv
             elif isinstance(inv, list):
-                percepts.inventory = {
-                    item["name"]: item.get("count", 1)
-                    for item in inv
-                    if isinstance(item, dict) and "name" in item
-                }
+                inventory: dict[str, int] = defaultdict(int)
+                for item in inv:
+                    if isinstance(item, dict) and "name" in item:
+                        inventory[item["name"]] += item.get("count", 1)
+                percepts.inventory = dict(inventory)
 
     def _handle_chat(self, data: dict[str, Any], percepts: PerceptData) -> None:
         """Add chat message to percepts."""

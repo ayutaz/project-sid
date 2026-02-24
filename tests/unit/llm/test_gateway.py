@@ -15,6 +15,7 @@ from structlog.testing import capture_logs
 from piano.core.types import LLMRequest, LLMResponse, ModuleTier
 from piano.llm.gateway import (
     CircuitBreaker,
+    GatewayLLMProvider,
     LLMGateway,
     QueuedRequest,
     RequestPriority,
@@ -822,3 +823,65 @@ class TestDedupKey:
         req1 = LLMRequest(prompt="test", max_tokens=100, json_mode=True)
         req2 = LLMRequest(prompt="test", max_tokens=100, json_mode=True)
         assert LLMGateway._make_dedup_key(req1) == LLMGateway._make_dedup_key(req2)
+
+
+# ---------------------------------------------------------------------------
+# GatewayLLMProvider adapter tests
+# ---------------------------------------------------------------------------
+
+
+class TestGatewayLLMProvider:
+    """Tests for GatewayLLMProvider adapter."""
+
+    async def test_complete_routes_through_gateway(self, mock_provider: AsyncMock) -> None:
+        """GatewayLLMProvider.complete() should route to gateway.submit()."""
+        gw = LLMGateway(mock_provider, max_concurrent=5, requests_per_minute=100)
+        await gw.start()
+
+        try:
+            adapter = GatewayLLMProvider(gw, agent_id="test-agent")
+            request = LLMRequest(prompt="test")
+            response = await adapter.complete(request)
+            assert response.content == "test response"
+            assert response.model == "mock-model"
+        finally:
+            await gw.stop()
+
+    async def test_total_cost_usd_delegates(self, mock_provider: AsyncMock) -> None:
+        """total_cost_usd should delegate to the gateway."""
+        gw = LLMGateway(mock_provider, max_concurrent=5, requests_per_minute=100)
+        await gw.start()
+
+        try:
+            adapter = GatewayLLMProvider(gw)
+            await adapter.complete(LLMRequest(prompt="test"))
+            assert adapter.total_cost_usd == gw.total_cost_usd
+        finally:
+            await gw.stop()
+
+    async def test_custom_priority(self, mock_provider: AsyncMock) -> None:
+        """GatewayLLMProvider should use the configured priority."""
+        gw = LLMGateway(mock_provider, max_concurrent=5, requests_per_minute=100)
+        await gw.start()
+
+        try:
+            adapter = GatewayLLMProvider(gw, priority=RequestPriority.HIGH)
+            response = await adapter.complete(LLMRequest(prompt="test"))
+            assert response.content == "test response"
+        finally:
+            await gw.stop()
+
+    async def test_not_running_raises(self, mock_provider: AsyncMock) -> None:
+        """Should raise RuntimeError if gateway is not started."""
+        gw = LLMGateway(mock_provider)
+        adapter = GatewayLLMProvider(gw)
+        with pytest.raises(RuntimeError, match="not running"):
+            await adapter.complete(LLMRequest(prompt="test"))
+
+    def test_implements_llm_provider_protocol(self, mock_provider: AsyncMock) -> None:
+        """GatewayLLMProvider should satisfy the LLMProvider protocol."""
+        from piano.llm.provider import LLMProvider
+
+        gw = LLMGateway(mock_provider)
+        adapter = GatewayLLMProvider(gw)
+        assert isinstance(adapter, LLMProvider)

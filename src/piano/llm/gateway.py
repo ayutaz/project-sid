@@ -11,6 +11,7 @@ from __future__ import annotations
 
 __all__ = [
     "CircuitBreaker",
+    "GatewayLLMProvider",
     "LLMGateway",
     "QueuedRequest",
     "RequestPriority",
@@ -516,3 +517,36 @@ class LLMGateway:
             total_requests=self._total_requests,
             total_cost_usd=round(self._total_cost_usd, 2),
         )
+
+
+class GatewayLLMProvider:
+    """Adapter that wraps LLMGateway to provide LLMProvider-compatible interface.
+
+    This allows code that expects an ``LLMProvider`` (e.g. ``CognitiveController``)
+    to route requests through the centralized gateway with queueing, rate limiting,
+    and circuit breaker protection.
+    """
+
+    def __init__(
+        self,
+        gateway: LLMGateway,
+        *,
+        agent_id: str = "default",
+        priority: RequestPriority = RequestPriority.NORMAL,
+    ) -> None:
+        self._gateway = gateway
+        self._agent_id = agent_id
+        self._priority = priority
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """LLMProvider-compatible complete method that routes through the gateway."""
+        return await self._gateway.submit(
+            request=request,
+            agent_id=self._agent_id,
+            priority=self._priority,
+        )
+
+    @property
+    def total_cost_usd(self) -> float:
+        """Return the total cost in USD from the underlying gateway."""
+        return self._gateway.total_cost_usd

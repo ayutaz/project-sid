@@ -20,12 +20,13 @@ export function getAdvancedHandlers(mcData: McData): Record<string, CommandHandl
       const inputDef = mcData.itemsByName[input_item];
       const fuelDef = mcData.itemsByName[fuel || "coal"];
       if (inputDef) await furnace.putInput(inputDef.id, null, smeltCount);
-      if (fuelDef) await furnace.putFuel(fuelDef.id, null, smeltCount);
+      // Coal smelts 8 items; compute fuel needed
+      const fuelNeeded = Math.ceil(smeltCount / 8);
+      if (fuelDef) await furnace.putFuel(fuelDef.id, null, fuelNeeded);
 
       // Wait for smelting with event-based check, capped at 25 seconds
       const maxWait = Math.min(10000 * smeltCount, 25000);
       await new Promise<void>((resolve) => {
-        let itemsCollected = 0;
         const checkInterval = setInterval(() => {
           const outputSlot = furnace.outputItem();
           if (outputSlot && outputSlot.count >= smeltCount) {
@@ -39,6 +40,12 @@ export function getAdvancedHandlers(mcData: McData): Record<string, CommandHandl
           resolve(); // Don't error on smelt timeout, return what we have
         }, maxWait);
       });
+
+      // Take smelted output
+      const outputItem = furnace.outputItem();
+      if (outputItem) {
+        await furnace.takeOutput();
+      }
 
       return { smelted: input_item, count: smeltCount };
     } finally {
@@ -108,5 +115,89 @@ export function getAdvancedHandlers(mcData: McData): Record<string, CommandHandl
     };
   };
 
-  return { smelt, farm, explore };
+  const flee: CommandHandler = async (bot, params) => {
+    const { from_x, from_y, from_z, distance } = params;
+    const fleeDistance = distance || 20;
+    // Move away from the specified position (or stay if no direction)
+    const dx = bot.entity.position.x - (from_x ?? bot.entity.position.x);
+    const dz = bot.entity.position.z - (from_z ?? bot.entity.position.z);
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    const targetX = bot.entity.position.x + (dx / len) * fleeDistance;
+    const targetZ = bot.entity.position.z + (dz / len) * fleeDistance;
+
+    (bot as any).pathfinder.setGoal(
+      new goals.GoalXZ(Math.floor(targetX), Math.floor(targetZ))
+    );
+
+    await new Promise<void>((resolve) => {
+      const onGoalReached = () => { clearTimeout(timeout); resolve(); };
+      const timeout = setTimeout(() => {
+        bot.removeListener("goal_reached" as any, onGoalReached);
+        (bot as any).pathfinder.setGoal(null);
+        resolve();
+      }, 10000);
+      bot.once("goal_reached" as any, onGoalReached);
+    });
+
+    const finalPos = bot.entity.position;
+    return {
+      success: true,
+      final_position: { x: finalPos.x, y: finalPos.y, z: finalPos.z },
+    };
+  };
+
+  const deposit: CommandHandler = async (bot, params) => {
+    const { x, y, z, items } = params;
+    const chestBlock = bot.blockAt(new Vec3(x, y, z));
+    if (!chestBlock) {
+      throw new Error("No block at position");
+    }
+    const chest = await (bot as any).openContainer(chestBlock);
+    try {
+      if (items && Array.isArray(items)) {
+        for (const item of items) {
+          const invItem = bot.inventory.items().find((i: any) => i.name === item.name);
+          if (invItem) {
+            await chest.deposit(invItem.type, null, item.count || invItem.count);
+          }
+        }
+      }
+      return { success: true };
+    } finally {
+      chest.close();
+    }
+  };
+
+  const withdraw: CommandHandler = async (bot, params) => {
+    const { x, y, z, items } = params;
+    const chestBlock = bot.blockAt(new Vec3(x, y, z));
+    if (!chestBlock) {
+      throw new Error("No block at position");
+    }
+    const chest = await (bot as any).openContainer(chestBlock);
+    try {
+      if (items && Array.isArray(items)) {
+        for (const item of items) {
+          const chestItem = chest.items().find((i: any) => i.name === item.name);
+          if (chestItem) {
+            await chest.withdraw(chestItem.type, null, item.count || chestItem.count);
+          }
+        }
+      }
+      return { success: true };
+    } finally {
+      chest.close();
+    }
+  };
+
+  return {
+    smelt,
+    farm,
+    plant: farm,       // Python "plant" action -> farmHandler
+    harvest: farm,     // Python "harvest" action -> farmHandler
+    explore,
+    flee,
+    deposit,
+    withdraw,
+  };
 }
